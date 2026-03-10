@@ -105,7 +105,7 @@
   ],
   "publicApiSurface": [
     "GET /api/apartments - Search available apartments",
-    "GET /api/bookings/{id} - Get booking details",
+    "GET /api/bookings/id - Get booking details (query param: id)",
     "POST /api/bookings - Reserve a new booking",
     "POST /api/users/register - Register a new user",
     "POST /api/users/login - Authenticate user",

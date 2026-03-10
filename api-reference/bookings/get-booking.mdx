@@ -10,14 +10,14 @@ description: Retrieve details of a specific booking
 ## Endpoint
 
 ```
-GET /api/bookings/{id}
+GET /api/bookings/id?id={guid}
 ```
 
 Retrieve detailed information about a specific booking by its unique identifier.
 
-## Path Parameters
+## Query Parameters
 
-<ParamField path="id" type="string (uuid)" required>
+<ParamField query="id" type="string (uuid)" required>
   The unique identifier of the booking to retrieve.
   
   Example: `3fa85f64-5717-4562-b3fc-2c963f66afa6`
@@ -94,7 +94,7 @@ Retrieve detailed information about a specific booking by its unique identifier.
 ## Example Request
 
 ```bash
-curl -X GET "https://api.bookify.com/api/bookings/3fa85f64-5717-4562-b3fc-2c963f66afa6" \
+curl -X GET "https://api.bookify.com/api/bookings/id?id=3fa85f64-5717-4562-b3fc-2c963f66afa6" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
   -H "Accept: application/json"
 ```
