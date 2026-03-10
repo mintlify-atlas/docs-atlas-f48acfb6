@@ -1,0 +1,709 @@
+---
+title: Project Structure
+description: Directory structure and organization of the Bookify solution
+---
+
+## Solution Overview
+
+Bookify is organized as a .NET solution with four projects, each representing a layer in the Clean Architecture:
+
+```
+src/
+├── Bookify.Api/              # Presentation Layer
+├── Bookify.Application/      # Application Layer
+├── Bookify.Domain/           # Domain Layer
+└── Bookify.Infrastructure/   # Infrastructure Layer
+```
+
+## Bookify.Domain Project
+
+The Domain layer is the core of the application with zero external dependencies.
+
+### Directory Structure
+
+```
+Bookify.Domain/
+├── Abstractions/
+│   ├── Entity.cs
+│   ├── IDomainEvent.cs
+│   ├── IUnitOfWork.cs
+│   ├── Result.cs
+│   └── Error.cs
+├── Apartments/
+│   ├── Apartment.cs
+│   ├── ApartmentErrors.cs
+│   ├── Enums/
+│   │   └── Amenity.cs
+│   ├── Interfaces/
+│   │   └── IApartmentRepository.cs
+│   └── ValueObjects/
+│       ├── Name.cs
+│       ├── Description.cs
+│       └── Address.cs
+├── Bookings/
+│   ├── Booking.cs
+│   ├── BookingErrors.cs
+│   ├── Enums/
+│   │   └── BookingStatus.cs
+│   ├── Events/
+│   │   ├── BookingReservedDomainEvent.cs
+│   │   ├── BookingConfirmedDomainEvent.cs
+│   │   ├── BookingRejectedDomainEvent.cs
+│   │   ├── BookingCompletedDomainEvent.cs
+│   │   └── BookingCancelledDomainEvent.cs
+│   ├── Interfaces/
+│   │   └── IBookingRepository.cs
+│   ├── Services/
+│   │   ├── PricingService.cs
+│   │   └── PricingDetails.cs
+│   └── ValueObjects/
+│       └── DateRange.cs
+├── Reviews/
+│   ├── Review.cs
+│   ├── ReviewErrors.cs
+│   ├── Events/
+│   │   └── ReviewCreatedDomainEvent.cs
+│   ├── Interfaces/
+│   │   └── IReviewRepository.cs
+│   └── ValueObjects/
+│       ├── Rating.cs
+│       └── Comment.cs
+├── Users/
+│   ├── Entities/
+│   │   ├── User.cs
+│   │   ├── Role.cs
+│   │   ├── Permission.cs
+│   │   └── RolePermission.cs
+│   ├── Events/
+│   │   └── UserCreatedDomainEvent.cs
+│   ├── Interfaces/
+│   │   └── IUserRepository.cs
+│   ├── UserErrors.cs
+│   └── ValueObjects/
+│       ├── Email.cs
+│       ├── FirstName.cs
+│       └── LastName.cs
+└── Shared/
+    ├── Money.cs
+    └── Currency.cs
+```
+
+### Key Folders
+
+<Accordion title="Abstractions/">
+  Contains base classes and interfaces used throughout the domain:
+  - `Entity` - Base class for all entities
+  - `IDomainEvent` - Interface for domain events
+  - `IUnitOfWork` - Transaction abstraction
+  - `Result` - Result pattern implementation
+  - `Error` - Error representation
+</Accordion>
+
+<Accordion title="Aggregates (Apartments/, Bookings/, Reviews/, Users/)">
+  Each aggregate has its own folder containing:
+  - **Root Entity** - The aggregate root (e.g., `Booking.cs`)
+  - **Enums/** - Enumeration types
+  - **Events/** - Domain events raised by this aggregate
+  - **Interfaces/** - Repository interfaces
+  - **Services/** - Domain services
+  - **ValueObjects/** - Value objects specific to this aggregate
+  - **Errors** - Static error definitions
+</Accordion>
+
+<Accordion title="Shared/">
+  Contains value objects and types shared across multiple aggregates:
+  - `Money` - Monetary value with currency
+  - `Currency` - Currency enumeration
+</Accordion>
+
+### Naming Conventions
+
+- **Entities**: `Booking.cs`, `Apartment.cs`, `User.cs`
+- **Value Objects**: `Email.cs`, `Money.cs`, `DateRange.cs`
+- **Domain Events**: `*DomainEvent.cs` (e.g., `BookingReservedDomainEvent.cs`)
+- **Repositories**: `I*Repository.cs` (e.g., `IBookingRepository.cs`)
+- **Errors**: `*Errors.cs` (e.g., `BookingErrors.cs`)
+- **Services**: `*Service.cs` (e.g., `PricingService.cs`)
+
+## Bookify.Application Project
+
+The Application layer contains use cases and orchestrates domain logic.
+
+### Directory Structure
+
+```
+Bookify.Application/
+├── Abstractions/
+│   ├── Authentication/
+│   │   ├── IAuthenticationService.cs
+│   │   ├── IJwtService.cs
+│   │   └── IUserContext.cs
+│   ├── Behaviors/
+│   │   ├── LoggingBehavior.cs
+│   │   ├── ValidationBehavior.cs
+│   │   └── QueryCachingBehavior.cs
+│   ├── Caching/
+│   │   ├── ICacheService.cs
+│   │   └── ICachedQuery.cs
+│   ├── Clock/
+│   │   └── IDateTimeProvider.cs
+│   ├── Data/
+│   │   └── ISqlConnectionFactory.cs
+│   ├── Email/
+│   │   └── IEmailService.cs
+│   └── Messaging/
+│       ├── ICommand.cs
+│       ├── ICommandHandler.cs
+│       ├── IQuery.cs
+│       └── IQueryHandler.cs
+├── Apartments/
+│   └── SearchApartments/
+│       ├── SearchApartmentsQuery.cs
+│       ├── SearchApartmentsQueryHandler.cs
+│       ├── ApartmentResponse.cs
+│       └── AddressResponse.cs
+├── Bookings/
+│   ├── GetBooking/
+│   │   ├── GetBookingQuery.cs
+│   │   ├── GetBookingQueryHandler.cs
+│   │   └── BookingResponse.cs
+│   └── ReserveBooking/
+│       ├── ReserveBookingCommand.cs
+│       ├── ReserveBookingCommandHandler.cs
+│       ├── ReserveBookingCommandValidator.cs
+│       └── BookingReservedDomainEventHandler.cs
+├── Users/
+│   ├── GetLoggedInUser/
+│   │   ├── GetLoggedInUserQuery.cs
+│   │   ├── GetLoggedInUserQueryHandler.cs
+│   │   └── UserResponse.cs
+│   ├── LoginUser/
+│   │   ├── LogInUserCommand.cs
+│   │   ├── LogInUserCommandHandler.cs
+│   │   └── AccessTokenResponse.cs
+│   └── RegisterUser/
+│       ├── RegisterUserCommand.cs
+│       ├── RegisterUserCommandHandler.cs
+│       └── RegisterUserCommandValidator.cs
+├── Exceptions/
+│   ├── ConcurrencyException.cs
+│   ├── ValidationException.cs
+│   └── ValidationError.cs
+└── DependencyInjection.cs
+```
+
+### Key Folders
+
+<Accordion title="Abstractions/">
+  Contains interfaces and pipeline behaviors:
+  - **Authentication/** - Auth service interfaces
+  - **Behaviors/** - MediatR pipeline behaviors
+  - **Caching/** - Cache service interfaces
+  - **Clock/** - Date/time abstraction
+  - **Data/** - Database connection factory
+  - **Email/** - Email service interface
+  - **Messaging/** - CQRS abstractions
+</Accordion>
+
+<Accordion title="Feature Folders (Apartments/, Bookings/, Users/)">
+  Organized by feature/use case. Each use case has its own folder containing:
+  - **Command/Query** - The request object
+  - **Handler** - Processes the command/query
+  - **Validator** - FluentValidation validator (for commands)
+  - **Response DTOs** - Data returned to the API
+  - **Event Handlers** - Domain event handlers
+  
+  Example: `ReserveBooking/`
+  - `ReserveBookingCommand.cs`
+  - `ReserveBookingCommandHandler.cs`
+  - `ReserveBookingCommandValidator.cs`
+  - `BookingReservedDomainEventHandler.cs`
+</Accordion>
+
+<Accordion title="Exceptions/">
+  Application-specific exceptions:
+  - `ValidationException` - Thrown by validation behavior
+  - `ConcurrencyException` - Thrown on concurrency conflicts
+</Accordion>
+
+### Naming Conventions
+
+- **Commands**: `*Command.cs` (e.g., `ReserveBookingCommand.cs`)
+- **Command Handlers**: `*CommandHandler.cs`
+- **Validators**: `*CommandValidator.cs`
+- **Queries**: `*Query.cs` (e.g., `GetBookingQuery.cs`)
+- **Query Handlers**: `*QueryHandler.cs`
+- **Response DTOs**: `*Response.cs` (e.g., `BookingResponse.cs`)
+- **Event Handlers**: `*DomainEventHandler.cs`
+
+### Feature Organization
+
+Each feature is self-contained in its own folder:
+
+```
+ReserveBooking/
+├── ReserveBookingCommand.cs              # The command
+├── ReserveBookingCommandHandler.cs        # Executes the use case
+├── ReserveBookingCommandValidator.cs      # Validates input
+└── BookingReservedDomainEventHandler.cs   # Handles domain event
+```
+
+This makes features easy to find, modify, and test.
+
+## Bookify.Infrastructure Project
+
+The Infrastructure layer provides implementations for external concerns.
+
+### Directory Structure
+
+```
+Bookify.Infrastructure/
+├── Authentication/
+│   ├── AuthenticationService.cs
+│   ├── AuthenticationOptions.cs
+│   ├── JwtService.cs
+│   ├── JwtBearerOptionsSetup.cs
+│   ├── KeycloakOptions.cs
+│   ├── UserContext.cs
+│   ├── ClaimsPrincipalExtensions.cs
+│   ├── AdminAuthorizationDelegatingHandler.cs
+│   └── Models/
+│       ├── AuthorizationToken.cs
+│       ├── UserRepresentationModel.cs
+│       └── CredentialRepresentationModel.cs
+├── Authorization/
+│   ├── AuthorizationService.cs
+│   ├── CustomClaimsTransformation.cs
+│   ├── HasPermissionAttribute.cs
+│   ├── PermissionAuthorizationHandler.cs
+│   ├── PermissionAuthorizationPolicyProvider.cs
+│   ├── PermissionRequirement.cs
+│   └── UserRolesResponse.cs
+├── Caching/
+│   ├── CacheService.cs
+│   └── CacheOptions.cs
+├── Clock/
+│   └── DateTimeProvider.cs
+├── Configurations/
+│   ├── ApartmentConfiguration.cs
+│   ├── BookingConfiguration.cs
+│   ├── ReviewConfiguration.cs
+│   ├── UserConfiguration.cs
+│   ├── RoleConfiguration.cs
+│   ├── PermissionConfiguration.cs
+│   └── RolePermissionConfiguration.cs
+├── Data/
+│   ├── SqlConnectionFactory.cs
+│   └── DateOnlyTypeHandler.cs
+├── Email/
+│   └── EmailService.cs
+├── Migrations/
+│   ├── 20241219181115_Create_Database.cs
+│   ├── 20241221134404_AddIdUser.cs
+│   ├── 20250107145829__AddIdentityTables.cs
+│   └── ApplicationDbContextModelSnapshot.cs
+├── Repositories/
+│   ├── Repository.cs
+│   ├── ApartmentRepository.cs
+│   ├── BookingRepository.cs
+│   ├── ReviewRepository.cs
+│   └── UserRepository.cs
+├── ApplicationDbContext.cs
+└── DependencyInjection.cs
+```
+
+### Key Folders
+
+<Accordion title="Authentication/">
+  JWT and Keycloak authentication:
+  - `AuthenticationService` - Keycloak integration
+  - `JwtService` - JWT token generation
+  - `UserContext` - Current user information
+  - **Models/** - Keycloak API models
+</Accordion>
+
+<Accordion title="Authorization/">
+  Permission-based authorization:
+  - `AuthorizationService` - Gets user permissions
+  - `HasPermissionAttribute` - Authorize by permission
+  - `PermissionAuthorizationHandler` - Validates permissions
+  - `CustomClaimsTransformation` - Adds permissions to claims
+</Accordion>
+
+<Accordion title="Caching/">
+  Redis caching implementation:
+  - `CacheService` - Implements `ICacheService`
+  - `CacheOptions` - Configuration
+</Accordion>
+
+<Accordion title="Configurations/">
+  EF Core entity configurations:
+  - One configuration file per aggregate root
+  - Defines table mappings, relationships, and conversions
+  
+  Example: `BookingConfiguration.cs` configures the `bookings` table.
+</Accordion>
+
+<Accordion title="Data/">
+  Database-related utilities:
+  - `SqlConnectionFactory` - Creates Dapper connections
+  - `DateOnlyTypeHandler` - Dapper type handler for DateOnly
+</Accordion>
+
+<Accordion title="Migrations/">
+  EF Core migrations:
+  - Database schema changes over time
+  - Generated with `dotnet ef migrations add`
+</Accordion>
+
+<Accordion title="Repositories/">
+  Repository implementations:
+  - `Repository<T>` - Generic repository base class
+  - `ApartmentRepository`, `BookingRepository`, etc. - Specific implementations
+</Accordion>
+
+### EF Core Configuration Example
+
+```csharp
+// src/Bookify.Infrastructure/Configurations/BookingConfiguration.cs
+public class BookingConfiguration : IEntityTypeConfiguration<Booking>
+{
+    public void Configure(EntityTypeBuilder<Booking> builder)
+    {
+        builder.ToTable("bookings");
+        
+        builder.HasKey(booking => booking.Id);
+        
+        builder.OwnsOne(booking => booking.PriceForPeriod, priceBuilder =>
+        {
+            priceBuilder.Property(money => money.Currency)
+                .HasConversion(
+                    currency => currency.Code,
+                    code => Currency.FromCode(code));
+        });
+        
+        builder.OwnsOne(booking => booking.Duration);
+    }
+}
+```
+
+## Bookify.Api Project
+
+The API layer is the entry point for HTTP requests.
+
+### Directory Structure
+
+```
+Bookify.Api/
+├── Controllers/
+│   ├── Apartments/
+│   │   └── ApartmentsController.cs
+│   ├── Bookings/
+│   │   └── BookingsController.cs
+│   ├── Reviews/
+│   │   └── ReviewsController.cs
+│   ├── Users/
+│   │   └── UsersController.cs
+│   └── Roles.cs
+├── Contracts/
+│   ├── Bookings/
+│   │   └── ReserveBookingRequest.cs
+│   ├── Reviews/
+│   │   └── AddReviewRequest.cs
+│   └── Users/
+│       ├── RegisterUserRequest.cs
+│       └── LogInUserRequest.cs
+├── Extensions/
+│   ├── ApplicationBuilderExtensions.cs
+│   └── SeedDataExtensions.cs
+├── Middleware/
+│   ├── ExceptionHandlingMiddleware.cs
+│   └── RequestContextLoggingMiddleware.cs
+├── Properties/
+│   └── launchSettings.json
+├── appsettings.json
+├── appsettings.Development.json
+└── Program.cs
+```
+
+### Key Folders
+
+<Accordion title="Controllers/">
+  API endpoints organized by aggregate:
+  - `ApartmentsController` - Search apartments
+  - `BookingsController` - Manage bookings
+  - `ReviewsController` - Add and view reviews
+  - `UsersController` - User registration and authentication
+  
+  Each controller is in its own folder for organization.
+</Accordion>
+
+<Accordion title="Contracts/">
+  Request and response DTOs for the API:
+  - Maps to commands/queries in the Application layer
+  - Provides a stable API contract
+  - Can differ from internal command/query structure
+</Accordion>
+
+<Accordion title="Extensions/">
+  Extension methods for application setup:
+  - `ApplicationBuilderExtensions` - Middleware registration
+  - `SeedDataExtensions` - Database seeding
+</Accordion>
+
+<Accordion title="Middleware/">
+  Custom middleware:
+  - `ExceptionHandlingMiddleware` - Global exception handling
+  - `RequestContextLoggingMiddleware` - Correlation ID logging
+</Accordion>
+
+### Controller Example
+
+```csharp
+// src/Bookify.Api/Controllers/Bookings/BookingsController.cs:11
+[ApiController]
+[Route("api/bookings")]
+public class BookingsController(ISender sender) : ControllerBase
+{
+    [HttpGet("id")]
+    public async Task<IActionResult> GetBooking(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var query = new GetBookingQuery(id);
+        var result = await sender.Send(query, cancellationToken);
+        
+        return result.IsSuccess ? Ok(result.Value) : NotFound();
+    }
+    
+    [HttpPost]
+    public async Task<IActionResult> ReserveBooking(
+        ReserveBookingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var command = new ReserveBookingCommand(
+            request.ApartmentId,
+            request.UserId,
+            request.StartDate,
+            request.EndDate);
+        
+        var result = await sender.Send(command, cancellationToken);
+        
+        if (result.IsFailure)
+        {
+            return BadRequest(result.Error);
+        }
+        
+        return CreatedAtAction(
+            nameof(GetBooking),
+            new { id = result.Value },
+            result.Value);
+    }
+}
+```
+
+Controllers:
+1. Accept HTTP requests
+2. Map to commands/queries
+3. Send via MediatR
+4. Return HTTP responses
+
+### Application Composition
+
+```csharp
+// src/Bookify.Api/Program.cs:8
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((context, loggerConfig) =>
+    loggerConfig.ReadFrom.Configuration(context.Configuration));
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Register services from each layer
+builder.Services
+    .AddApplication()                            // Application layer
+    .AddInfrastructure(builder.Configuration);   // Infrastructure layer
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+    app.ApplyMigrations();
+    app.SeedData();
+}
+
+app.UseHttpsRedirection();
+app.UseRequestContextLogging();
+app.UseSerilogRequestLogging();
+app.UseCustomExceptionHandler();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+app.MapHealthChecks("health");
+
+app.Run();
+```
+
+## File Naming Patterns
+
+Consistent naming makes the codebase easy to navigate:
+
+### Domain Layer
+- Entities: `Booking.cs`, `Apartment.cs`
+- Value Objects: `Money.cs`, `Email.cs`
+- Domain Events: `BookingReservedDomainEvent.cs`
+- Repositories: `IBookingRepository.cs`
+- Errors: `BookingErrors.cs`
+
+### Application Layer
+- Commands: `ReserveBookingCommand.cs`
+- Command Handlers: `ReserveBookingCommandHandler.cs`
+- Validators: `ReserveBookingCommandValidator.cs`
+- Queries: `GetBookingQuery.cs`
+- Query Handlers: `GetBookingQueryHandler.cs`
+- Responses: `BookingResponse.cs`
+- Event Handlers: `BookingReservedDomainEventHandler.cs`
+
+### Infrastructure Layer
+- Repositories: `BookingRepository.cs`
+- Configurations: `BookingConfiguration.cs`
+- Services: `AuthenticationService.cs`, `CacheService.cs`
+
+### API Layer
+- Controllers: `BookingsController.cs`
+- Requests: `ReserveBookingRequest.cs`
+
+## Namespace Organization
+
+Namespaces follow the folder structure:
+
+```csharp
+// Domain
+namespace Bookify.Domain.Bookings;
+namespace Bookify.Domain.Bookings.Events;
+namespace Bookify.Domain.Bookings.ValueObjects;
+
+// Application
+namespace Bookify.Application.Bookings.ReserveBooking;
+namespace Bookify.Application.Abstractions.Messaging;
+
+// Infrastructure
+namespace Bookify.Infrastructure.Repositories;
+namespace Bookify.Infrastructure.Authentication;
+
+// API
+namespace Bookify.Api.Controllers.Bookings;
+namespace Bookify.Api.Contracts.Bookings;
+```
+
+## Benefits of This Structure
+
+<CardGroup cols={2}>
+  <Card title="Feature Cohesion" icon="puzzle-piece">
+    Everything related to a feature is in one folder. Want to modify booking? Look in `Bookings/`.
+  </Card>
+  
+  <Card title="Easy Navigation" icon="map">
+    Consistent naming and folder structure make files easy to find.
+  </Card>
+  
+  <Card title="Scalability" icon="arrow-up-right-dots">
+    New features are added as new folders. Existing features don't become cluttered.
+  </Card>
+  
+  <Card title="Clear Dependencies" icon="arrow-right">
+    Project structure enforces dependency rules. Can't accidentally reference Infrastructure from Domain.
+  </Card>
+</CardGroup>
+
+## Adding a New Feature
+
+To add a new feature (e.g., "Complete Booking"):
+
+<Steps>
+  <Step title="Domain Layer">
+    Add method to `Booking` entity:
+    
+    ```csharp
+    // src/Bookify.Domain/Bookings/Booking.cs
+    public Result Complete(DateTime utcNow)
+    {
+        // Business logic
+    }
+    ```
+    
+    Add domain event:
+    
+    ```csharp
+    // src/Bookify.Domain/Bookings/Events/BookingCompletedDomainEvent.cs
+    public sealed record BookingCompletedDomainEvent(Guid BookingId) : IDomainEvent;
+    ```
+  </Step>
+  
+  <Step title="Application Layer">
+    Create feature folder:
+    
+    ```
+    Bookings/CompleteBooking/
+    ├── CompleteBookingCommand.cs
+    ├── CompleteBookingCommandHandler.cs
+    └── CompleteBookingCommandValidator.cs
+    ```
+  </Step>
+  
+  <Step title="API Layer">
+    Add endpoint to controller:
+    
+    ```csharp
+    [HttpPut("{id}/complete")]
+    public async Task<IActionResult> CompleteBooking(Guid id)
+    {
+        var command = new CompleteBookingCommand(id);
+        var result = await sender.Send(command);
+        return result.IsSuccess ? Ok() : BadRequest(result.Error);
+    }
+    ```
+  </Step>
+</Steps>
+
+No changes needed in Infrastructure (unless you need new database fields).
+
+## Best Practices
+
+<Note>
+  **One feature, one folder.** Keep all files related to a use case together.
+</Note>
+
+<Warning>
+  **Don't create "Services" or "Helpers" folders.** Put code where it belongs based on its responsibility.
+</Warning>
+
+<Accordion title="How to organize DTOs?">
+  - **API Contracts**: `Bookify.Api/Contracts/`
+  - **Application Responses**: Next to the query handler
+  - **Infrastructure Models**: Next to the service that uses them
+  
+  Keep DTOs close to where they're used.
+</Accordion>
+
+<Accordion title="Where do cross-cutting concerns go?">
+  - **Application Layer**: Behaviors, abstractions
+  - **Infrastructure Layer**: Implementations (caching, logging, etc.)
+  - **API Layer**: Middleware
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="diagram-project" href="/architecture/overview">
+    Return to the architecture overview
+  </Card>
+  
+  <Card title="Getting Started" icon="rocket" href="/quickstart">
+    Learn how to set up and run Bookify
+  </Card>
+</CardGroup>

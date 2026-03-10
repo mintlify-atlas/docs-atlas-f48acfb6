@@ -1,0 +1,758 @@
+---
+title: Domain-Driven Design
+description: DDD concepts in Bookify - Aggregates, Entities, Value Objects, and Domain Events
+---
+
+## What is Domain-Driven Design?
+
+**Domain-Driven Design (DDD)** is an approach to software development that focuses on:
+
+- Modeling the business domain with **rich domain models**
+- Placing business logic in the domain layer
+- Using **ubiquitous language** throughout the codebase
+- Organizing code around **aggregates** and **bounded contexts**
+
+<Note>
+  In DDD, the **domain model** is not just a data structure - it's a behavioral model that contains business rules and logic.
+</Note>
+
+## Core DDD Building Blocks
+
+### Entities
+
+**Entities** are objects that have:
+- A unique identity that persists over time
+- A lifecycle (created, modified, deleted)
+- Behavior (methods that enforce business rules)
+
+```csharp
+// src/Bookify.Domain/Abstractions/Entity.cs:3
+public abstract class Entity
+{
+    private readonly List<IDomainEvent> _domainEvents = [];
+    
+    public Guid Id { get; init; }
+    
+    protected Entity(Guid id)
+    {
+        Id = id;
+    }
+    
+    public IReadOnlyList<IDomainEvent> GetDomainEvents()
+    {
+        return _domainEvents.ToList();
+    }
+    
+    public void ClearDomainEvents()
+    {
+        _domainEvents.Clear();
+    }
+    
+    protected void RaiseDomainEvent(IDomainEvent domainEvent)
+    {
+        _domainEvents.Add(domainEvent);
+    }
+}
+```
+
+#### Example: Booking Entity
+
+The `Booking` entity has a unique ID and behavior:
+
+```csharp
+// src/Bookify.Domain/Bookings/Booking.cs:11
+public sealed class Booking : Entity
+{
+    public Guid ApartmentId { get; private set; }
+    public Guid UserId { get; private set; }
+    public DateRange Duration { get; private set; }
+    public Money PriceForPeriod { get; private set; }
+    public Money CleaningFee { get; private set; }
+    public Money AmenitiesUpCharge { get; private set; }
+    public Money TotalPrice { get; private set; }
+    public BookingStatus Status { get; private set; }
+    
+    // Factory method - encapsulates creation logic
+    public static Booking Reserve(
+        Apartment apartment,
+        Guid userId,
+        DateRange duration,
+        DateTime utcNow,
+        PricingService pricingService)
+    {
+        var pricingDetails = pricingService.CalculatePrice(apartment, duration);
+        
+        var booking = new Booking(
+            Guid.NewGuid(),
+            apartment.Id,
+            userId,
+            duration,
+            pricingDetails.PriceForPeriod,
+            pricingDetails.CleaningFee,
+            pricingDetails.AmenitiesUpCharge,
+            pricingDetails.TotalPrice,
+            BookingStatus.Reserved,
+            utcNow);
+        
+        booking.RaiseDomainEvent(new BookingReservedDomainEvent(booking.Id));
+        apartment.LastBookedOnUtc = utcNow;
+        
+        return booking;
+    }
+    
+    // Business rule: can only confirm reserved bookings
+    public Result Confirm(DateTime utcNow)
+    {
+        if (Status != BookingStatus.Reserved)
+        {
+            return Result.Failure(BookingErrors.NotReserved);
+        }
+        
+        Status = BookingStatus.Confirmed;
+        ConfirmedOnUtc = utcNow;
+        
+        RaiseDomainEvent(new BookingConfirmedDomainEvent(Id));
+        
+        return Result.Success();
+    }
+    
+    // Business rule: can only cancel confirmed bookings before they start
+    public Result Cancel(DateTime utcNow)
+    {
+        if (Status != BookingStatus.Confirmed)
+        {
+            return Result.Failure(BookingErrors.NotConfirmed);
+        }
+        
+        var currentDate = DateOnly.FromDateTime(utcNow);
+        if (currentDate > Duration.Start)
+        {
+            return Result.Failure(BookingErrors.AlreadyStarted);
+        }
+        
+        Status = BookingStatus.Cancelled;
+        CancelledOnUtc = utcNow;
+        
+        RaiseDomainEvent(new BookingCancelledDomainEvent(Id));
+        
+        return Result.Success();
+    }
+}
+```
+
+Key characteristics:
+- **Private setters** - State can only be changed through methods
+- **Factory methods** - Control how objects are created
+- **Business rules** - Enforced in the entity methods
+- **Domain events** - Raised when important state changes occur
+
+### Value Objects
+
+**Value Objects** are:
+- Defined by their attributes, not by identity
+- Immutable
+- Compared by value equality
+- Typically implemented as records in C#
+
+#### Example: Money Value Object
+
+```csharp
+// src/Bookify.Domain/Shared/Money.cs:3
+public record Money(decimal Amount, Currency Currency)
+{
+    public static Money operator +(Money first, Money second)
+    {
+        if (first.Currency != second.Currency)
+        {
+            throw new InvalidOperationException("Currencies have to be equal");
+        }
+        
+        return new Money(first.Amount + second.Amount, first.Currency);
+    }
+    
+    public static Money Zero() => new(0, Currency.None);
+    public static Money Zero(Currency currency) => new(0, currency);
+    public bool IsZero() => this == Zero(Currency);
+}
+```
+
+#### Example: DateRange Value Object
+
+```csharp
+// src/Bookify.Domain/Bookings/ValueObjects/DateRange.cs:3
+public record DateRange
+{
+    private DateRange() { }
+    
+    public DateOnly Start { get; init; }
+    public DateOnly End { get; init; }
+    public int LengthInDays => End.DayNumber - Start.DayNumber;
+    
+    public static DateRange Create(DateOnly start, DateOnly end)
+    {
+        if (start > end)
+        {
+            throw new ApplicationException("End date precedes start date");
+        }
+        
+        return new DateRange
+        {
+            Start = start,
+            End = end
+        };
+    }
+}
+```
+
+#### Example: Email Value Object
+
+```csharp
+// src/Bookify.Domain/Users/ValueObjects/Email.cs:3
+public record Email(string Value);
+```
+
+#### More Value Objects in Bookify
+
+- `Address` - Country, State, City, ZipCode, Street
+- `Name` - Apartment name
+- `Description` - Apartment description
+- `Rating` - Review rating (1-5)
+- `Comment` - Review comment
+- `FirstName` - User first name
+- `LastName` - User last name
+
+<Note>
+  Value objects encapsulate validation and business rules. For example, `DateRange.Create()` ensures the end date is after the start date.
+</Note>
+
+### Aggregates
+
+An **Aggregate** is:
+- A cluster of entities and value objects
+- Has a root entity (Aggregate Root)
+- Enforces consistency boundaries
+- Only the root can be referenced from outside
+
+#### The Four Aggregates in Bookify
+
+<CardGroup cols={2}>
+  <Card title="Booking" icon="calendar-check" color="#4CAF50">
+    Root: `Booking` entity
+    
+    Represents a reservation of an apartment by a user for a specific date range.
+  </Card>
+  
+  <Card title="Apartment" icon="building" color="#2196F3">
+    Root: `Apartment` entity
+    
+    Represents a rentable property with amenities and pricing.
+  </Card>
+  
+  <Card title="Review" icon="star" color="#FF9800">
+    Root: `Review` entity
+    
+    Represents a user's rating and comment for an apartment after booking.
+  </Card>
+  
+  <Card title="User" icon="user" color="#9C27B0">
+    Root: `User` entity
+    
+    Represents a user with roles and permissions.
+  </Card>
+</CardGroup>
+
+#### Example: Review Aggregate
+
+```csharp
+// src/Bookify.Domain/Reviews/Review.cs:9
+public sealed class Review : Entity
+{
+    public Guid ApartmentId { get; private set; }
+    public Guid BookingId { get; private set; }
+    public Guid UserId { get; private set; }
+    public Rating Rating { get; private set; }
+    public Comment Comment { get; private set; }
+    public DateTime CreatedOnUtc { get; private set; }
+    
+    // Business rule: can only review completed bookings
+    public static Result<Review> Create(
+        Booking booking,
+        Rating rating,
+        Comment comment,
+        DateTime createdOnUtc)
+    {
+        if (booking.Status != BookingStatus.Completed)
+        {
+            return Result.Failure<Review>(ReviewErrors.NotEligible);
+        }
+        
+        var review = new Review(
+            Guid.NewGuid(),
+            booking.ApartmentId,
+            booking.Id,
+            booking.UserId,
+            rating,
+            comment,
+            createdOnUtc);
+        
+        review.RaiseDomainEvent(new ReviewCreatedDomainEvent(review.Id));
+        
+        return review;
+    }
+}
+```
+
+This enforces the business rule that you can only review an apartment after completing a booking.
+
+### Domain Events
+
+**Domain Events** represent something that happened in the domain that domain experts care about.
+
+```csharp
+// src/Bookify.Domain/Abstractions/IDomainEvent.cs:5
+public interface IDomainEvent : INotification
+{
+}
+```
+
+#### Domain Events in Bookify
+
+<Accordion title="Booking Events">
+  - `BookingReservedDomainEvent` - A booking was created
+  - `BookingConfirmedDomainEvent` - A booking was confirmed
+  - `BookingRejectedDomainEvent` - A booking was rejected
+  - `BookingCompletedDomainEvent` - A booking was completed
+  - `BookingCancelledDomainEvent` - A booking was cancelled
+</Accordion>
+
+<Accordion title="User Events">
+  - `UserCreatedDomainEvent` - A new user registered
+</Accordion>
+
+<Accordion title="Review Events">
+  - `ReviewCreatedDomainEvent` - A review was created
+</Accordion>
+
+#### Example: Domain Event Definition
+
+```csharp
+// src/Bookify.Domain/Bookings/Events/BookingReservedDomainEvent.cs:5
+public sealed record BookingReservedDomainEvent(Guid BookingId) : IDomainEvent;
+```
+
+Domain events are simple records containing the data needed by event handlers.
+
+#### Raising Domain Events
+
+Entities raise events when important state changes occur:
+
+```csharp
+// src/Bookify.Domain/Bookings/Booking.cs:87
+booking.RaiseDomainEvent(new BookingReservedDomainEvent(booking.Id));
+```
+
+#### Publishing Domain Events
+
+Events are automatically published when `SaveChangesAsync` is called:
+
+```csharp
+// src/Bookify.Infrastructure/ApplicationDbContext.cs:40
+private async Task PublishDomainEventsAsync()
+{
+    var domainEvents = ChangeTracker
+        .Entries<Entity>()
+        .Select(entry => entry.Entity)
+        .SelectMany(entity =>
+        {
+            var domainEvents = entity.GetDomainEvents();
+            entity.ClearDomainEvents();
+            return domainEvents;
+        })
+        .ToList();
+    
+    foreach (var domainEvent in domainEvents)
+    {
+        await _publisher.Publish(domainEvent);
+    }
+}
+```
+
+#### Handling Domain Events
+
+Event handlers implement `INotificationHandler<TDomainEvent>`:
+
+```csharp
+// src/Bookify.Application/Bookings/ReserveBooking/BookingReservedDomainEventHandler.cs
+internal sealed class BookingReservedDomainEventHandler(
+    IBookingRepository bookingRepository,
+    IUserRepository userRepository,
+    IEmailService emailService)
+    : INotificationHandler<BookingReservedDomainEvent>
+{
+    public async Task Handle(
+        BookingReservedDomainEvent notification,
+        CancellationToken cancellationToken)
+    {
+        var booking = await bookingRepository.GetByIdAsync(
+            notification.BookingId,
+            cancellationToken);
+        
+        if (booking is null)
+        {
+            return;
+        }
+        
+        var user = await userRepository.GetByIdAsync(
+            booking.UserId,
+            cancellationToken);
+        
+        if (user is null)
+        {
+            return;
+        }
+        
+        await emailService.SendAsync(
+            user.Email.Value,
+            "Booking Reserved",
+            $"Your booking {booking.Id} has been reserved.");
+    }
+}
+```
+
+<Note>
+  Domain events enable **eventual consistency**. Side effects (like sending emails) happen asynchronously after the main transaction completes.
+</Note>
+
+### Domain Services
+
+When business logic doesn't naturally fit in a single entity, use a **Domain Service**.
+
+#### Example: PricingService
+
+```csharp
+// src/Bookify.Domain/Bookings/Services/PricingService.cs
+public class PricingService
+{
+    public PricingDetails CalculatePrice(Apartment apartment, DateRange period)
+    {
+        var currency = apartment.Price.Currency;
+        var priceForPeriod = new Money(
+            apartment.Price.Amount * period.LengthInDays,
+            currency);
+        
+        decimal percentageUpCharge = apartment.Amenities.Sum(amenity => amenity switch
+        {
+            Amenity.GardenView or Amenity.MountainView => 0.05m,
+            Amenity.AirConditioning => 0.01m,
+            Amenity.Parking => 0.01m,
+            _ => 0
+        });
+        
+        var amenitiesUpCharge = Money.Zero(currency);
+        if (percentageUpCharge > 0)
+        {
+            amenitiesUpCharge = new Money(
+                priceForPeriod.Amount * percentageUpCharge,
+                currency);
+        }
+        
+        var totalPrice = Money.Zero(currency);
+        totalPrice += priceForPeriod;
+        totalPrice += apartment.CleaningFee;
+        totalPrice += amenitiesUpCharge;
+        
+        return new PricingDetails(priceForPeriod, apartment.CleaningFee, amenitiesUpCharge, totalPrice);
+    }
+}
+```
+
+The pricing calculation involves both `Apartment` and `DateRange`, so it lives in a separate service.
+
+## Rich Domain Models
+
+Bookify uses **rich domain models** where entities contain behavior, not just data.
+
+### Anemic vs Rich Domain Model
+
+<CardGroup cols={2}>
+  <Card title="Anemic Model (Bad)" icon="circle-xmark" color="#F44336">
+    ```csharp
+    public class Booking
+    {
+        public Guid Id { get; set; }
+        public BookingStatus Status { get; set; }
+        // Just getters and setters
+    }
+    
+    // Logic in service layer
+    public class BookingService
+    {
+        public void Confirm(Booking booking)
+        {
+            booking.Status = BookingStatus.Confirmed;
+        }
+    }
+    ```
+  </Card>
+  
+  <Card title="Rich Model (Good)" icon="circle-check" color="#4CAF50">
+    ```csharp
+    public class Booking : Entity
+    {
+        public BookingStatus Status { get; private set; }
+        
+        public Result Confirm(DateTime utcNow)
+        {
+            if (Status != BookingStatus.Reserved)
+            {
+                return Result.Failure(
+                    BookingErrors.NotReserved);
+            }
+            
+            Status = BookingStatus.Confirmed;
+            ConfirmedOnUtc = utcNow;
+            
+            RaiseDomainEvent(
+                new BookingConfirmedDomainEvent(Id));
+            
+            return Result.Success();
+        }
+    }
+    ```
+  </Card>
+</CardGroup>
+
+In the rich model:
+- Business rules are enforced in the entity
+- State changes go through methods
+- Private setters prevent invalid state
+- Domain events communicate state changes
+
+## Ubiquitous Language
+
+DDD emphasizes using the same language in code that domain experts use:
+
+- `Reserve` a booking (not "Create")
+- `Confirm` a booking (not "Update status")
+- `Apartment` (not "Property" or "Unit")
+- `Amenity` (not "Feature")
+- `DateRange` with `Start` and `End` (not "CheckIn" and "CheckOut")
+
+This makes the code self-documenting and aligned with business requirements.
+
+## Repository Pattern
+
+Repositories abstract data access and work with aggregates:
+
+```csharp
+// src/Bookify.Domain/Bookings/Interfaces/IBookingRepository.cs
+public interface IBookingRepository
+{
+    Task<Booking?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    
+    void Add(Booking booking);
+    
+    Task<bool> IsOverlappingAsync(
+        Apartment apartment,
+        DateRange duration,
+        CancellationToken cancellationToken = default);
+}
+```
+
+Key points:
+- Repository interfaces are in the Domain layer
+- Implementations are in the Infrastructure layer
+- Repositories work with aggregate roots only
+- Methods use domain language (`IsOverlapping`, not `CheckAvailability`)
+
+## Error Handling with Result Pattern
+
+Bookify uses the **Result pattern** instead of exceptions for business rule violations:
+
+```csharp
+// src/Bookify.Domain/Abstractions/Result.cs:5
+public class Result
+{
+    public bool IsSuccess { get; }
+    public bool IsFailure => !IsSuccess;
+    public Error Error { get; }
+    
+    public static Result Success() => new(true, Error.None);
+    public static Result Failure(Error error) => new(false, error);
+}
+```
+
+Errors are defined as static properties:
+
+```csharp
+// src/Bookify.Domain/Bookings/BookingErrors.cs
+public static class BookingErrors
+{
+    public static Error NotFound = new(
+        "Booking.NotFound",
+        "The booking with the specified identifier was not found");
+    
+    public static Error Overlap = new(
+        "Booking.Overlap",
+        "The booking is overlapping with an existing booking");
+    
+    public static Error NotReserved = new(
+        "Booking.NotReserved",
+        "The booking is not pending");
+    
+    public static Error NotConfirmed = new(
+        "Booking.NotConfirmed",
+        "The booking is not confirmed");
+    
+    public static Error AlreadyStarted = new(
+        "Booking.AlreadyStarted",
+        "The booking has already started");
+}
+```
+
+Usage:
+
+```csharp
+var result = booking.Confirm(DateTime.UtcNow);
+
+if (result.IsFailure)
+{
+    // Handle error
+    return BadRequest(result.Error);
+}
+
+// Continue with success path
+```
+
+## Benefits of DDD in Bookify
+
+<CardGroup cols={2}>
+  <Card title="Business Logic Centralization" icon="bullseye">
+    All business rules are in the domain layer, making them easy to find and modify.
+  </Card>
+  
+  <Card title="Testability" icon="vial">
+    Domain logic can be unit tested without any infrastructure dependencies.
+  </Card>
+  
+  <Card title="Maintainability" icon="wrench">
+    Clear separation of concerns. Changes to business logic don't affect infrastructure.
+  </Card>
+  
+  <Card title="Clarity" icon="lightbulb">
+    Code uses business language, making it understandable to both developers and domain experts.
+  </Card>
+</CardGroup>
+
+## DDD Best Practices in Bookify
+
+<Note>
+  **Always** validate in the domain. Never rely solely on API-level validation.
+</Note>
+
+<Warning>
+  **Never** expose public setters on entities. Use methods to change state.
+</Warning>
+
+<Accordion title="When to use a Value Object vs a primitive?">
+  Use a Value Object when:
+  - The value has validation rules (`Email`, `Rating`)
+  - The value has behavior (`Money`, `DateRange`)
+  - You want type safety (`UserId` vs `ApartmentId` both being Guids)
+  - The concept is important to the domain (`Address` vs just strings)
+</Accordion>
+
+<Accordion title="When to create a new aggregate?">
+  Create a new aggregate when:
+  - The entity has its own lifecycle
+  - It needs to enforce its own invariants
+  - It's referenced independently from other aggregates
+  - It has clear transactional boundaries
+</Accordion>
+
+<Accordion title="Should aggregates reference other aggregates?">
+  Aggregates should reference other aggregates by ID only, not by navigation properties. This maintains clear boundaries:
+  
+  ```csharp
+  // Good
+  public class Booking
+  {
+      public Guid ApartmentId { get; private set; }
+      public Guid UserId { get; private set; }
+  }
+  
+  // Bad
+  public class Booking
+  {
+      public Apartment Apartment { get; private set; }
+      public User User { get; private set; }
+  }
+  ```
+</Accordion>
+
+## Testing Domain Logic
+
+Domain logic can be tested in pure unit tests:
+
+```csharp
+public class BookingTests
+{
+    [Fact]
+    public void Confirm_ShouldSucceed_WhenBookingIsReserved()
+    {
+        // Arrange
+        var booking = BookingData.CreateReserved();
+        var utcNow = DateTime.UtcNow;
+        
+        // Act
+        var result = booking.Confirm(utcNow);
+        
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        booking.Status.Should().Be(BookingStatus.Confirmed);
+        booking.ConfirmedOnUtc.Should().Be(utcNow);
+    }
+    
+    [Fact]
+    public void Confirm_ShouldFail_WhenBookingIsNotReserved()
+    {
+        // Arrange
+        var booking = BookingData.CreateConfirmed();
+        
+        // Act
+        var result = booking.Confirm(DateTime.UtcNow);
+        
+        // Assert
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(BookingErrors.NotReserved);
+    }
+    
+    [Fact]
+    public void Cancel_ShouldFail_WhenBookingAlreadyStarted()
+    {
+        // Arrange
+        var booking = BookingData.CreateConfirmedInPast();
+        
+        // Act
+        var result = booking.Cancel(DateTime.UtcNow);
+        
+        // Assert
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(BookingErrors.AlreadyStarted);
+    }
+}
+```
+
+No mocking required - just pure business logic testing.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Project Structure" icon="folder-tree" href="/architecture/project-structure">
+    See how DDD concepts map to the file structure
+  </Card>
+  
+  <Card title="Clean Architecture" icon="layer-group" href="/architecture/clean-architecture">
+    Understand how DDD fits into Clean Architecture
+  </Card>
+</CardGroup>

@@ -1,0 +1,156 @@
+---
+title: Reserve Booking
+description: Create a new apartment booking reservation
+---
+
+<Warning>
+  This endpoint requires authentication. Include a valid JWT token in the Authorization header.
+</Warning>
+
+## Endpoint
+
+```
+POST /api/bookings
+```
+
+Create a new booking reservation for an apartment. The booking will be created with a "Reserved" status and requires confirmation.
+
+## Request Body
+
+<ParamField body="apartmentId" type="string (uuid)" required>
+  The unique identifier of the apartment to book.
+  
+  Example: `a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d`
+</ParamField>
+
+<ParamField body="userId" type="string (uuid)" required>
+  The unique identifier of the user making the booking.
+  
+  Example: `7b9c3d1e-4f2a-5c6d-8e9f-0a1b2c3d4e5f`
+</ParamField>
+
+<ParamField body="startDate" type="string" required>
+  The check-in date in ISO 8601 format (YYYY-MM-DD).
+  
+  Example: `2024-06-15`
+</ParamField>
+
+<ParamField body="endDate" type="string" required>
+  The check-out date in ISO 8601 format (YYYY-MM-DD). Must be after `startDate`.
+  
+  Example: `2024-06-20`
+</ParamField>
+
+## Response
+
+On success, returns the unique identifier (UUID) of the newly created booking.
+
+## Example Request
+
+```bash
+curl -X POST "https://api.bookify.com/api/bookings" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "apartmentId": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+    "userId": "7b9c3d1e-4f2a-5c6d-8e9f-0a1b2c3d4e5f",
+    "startDate": "2024-06-15",
+    "endDate": "2024-06-20"
+  }'
+```
+
+## Example Response
+
+**Status Code:** `201 Created`
+
+**Headers:**
+```
+Location: /api/bookings/3fa85f64-5717-4562-b3fc-2c963f66afa6
+```
+
+**Body:**
+```json
+"3fa85f64-5717-4562-b3fc-2c963f66afa6"
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+Returned when the request contains invalid data or violates business rules.
+
+```json
+{
+  "code": "Booking.Overlap",
+  "message": "The apartment is already booked for the specified dates"
+}
+```
+
+**Common error codes:**
+
+- `Validation.Error` - Invalid request parameters (missing fields, invalid format)
+- `Booking.Overlap` - The apartment has a conflicting booking for the specified dates
+- `Apartment.NotFound` - The specified apartment does not exist
+- `User.NotFound` - The specified user does not exist
+- `Booking.InvalidDateRange` - End date is before or equal to start date
+- `Booking.PastDate` - Start date is in the past
+
+### 401 Unauthorized
+
+Returned when the request lacks valid authentication credentials.
+
+```json
+{
+  "code": "Auth.Unauthorized",
+  "message": "Authentication credentials are missing or invalid"
+}
+```
+
+### 500 Internal Server Error
+
+Returned when an unexpected server error occurs.
+
+```json
+{
+  "code": "Server.Error",
+  "message": "An unexpected error occurred while processing your request"
+}
+```
+
+## Usage Notes
+
+- The booking is created with a "Reserved" status (status code: 0)
+- The API calculates the total price based on the nightly rate, cleaning fees, and amenities
+- Dates are inclusive (both start and end dates are part of the booking period)
+- The apartment must be available for the entire date range (no overlapping bookings)
+- Use the returned booking ID to retrieve full booking details via the [Get Booking](/api-reference/bookings/get-booking) endpoint
+
+## Booking Workflow
+
+1. **Search** for available apartments using the [Search Apartments](/api-reference/apartments/search) endpoint
+2. **Reserve** the apartment using this endpoint
+3. **Confirm** the booking (status changes from Reserved to Confirmed)
+4. **Complete** the stay
+5. **Review** the apartment using the [Add Review](/api-reference/reviews/add-review) endpoint
+
+## Price Calculation
+
+The total booking price includes:
+
+- **Nightly rate** × Number of nights
+- **Cleaning fee** (one-time charge)
+- **Amenities upcharge** (if applicable)
+
+Example calculation for a 5-night stay:
+```
+Nightly rate: $150 × 5 nights = $750
+Cleaning fee: $50
+Amenities upcharge: $25
+Total: $825
+```
+
+## Related Endpoints
+
+- [Get Booking](/api-reference/bookings/get-booking) - Retrieve booking details
+- [Search Apartments](/api-reference/apartments/search) - Find available apartments
+- [Get Current User](/api-reference/users/get-current-user) - Get your user ID for bookings

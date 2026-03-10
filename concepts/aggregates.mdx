@@ -1,0 +1,651 @@
+---
+title: Aggregates
+description: Understanding how Bookify uses aggregates to enforce business rules and maintain consistency boundaries
+---
+
+Aggregates are clusters of domain objects that are treated as a single unit for data changes. They enforce business rules and ensure consistency within a well-defined boundary.
+
+## What Are Aggregates?
+
+In Domain-Driven Design, an aggregate is:
+
+- **A consistency boundary**: Business rules are enforced within the aggregate
+- **A transaction boundary**: Changes to an aggregate are atomic
+- **An access boundary**: External code can only access the aggregate root
+- **A unit of persistence**: Aggregates are loaded and saved as a whole
+
+<Info>
+Every aggregate has an **aggregate root**—the single entity that external objects use to interact with the aggregate.
+</Info>
+
+## Why Use Aggregates?
+
+Aggregates solve critical design problems:
+
+| Problem | Solution |
+|---------|----------|
+| **Scattered business rules** | Aggregate roots enforce invariants in one place |
+| **Inconsistent state** | Changes are atomic within the aggregate boundary |
+| **Complex object graphs** | Clear boundaries simplify the domain model |
+| **Concurrency conflicts** | Optimistic locking applies to the whole aggregate |
+| **Unclear ownership** | The root owns all entities within the boundary |
+
+## Aggregates in Bookify
+
+Bookify has four main aggregates:
+
+<CardGroup cols={2}>
+  <Card title="Booking" icon="calendar-check">
+    Manages reservation lifecycle and pricing
+  </Card>
+  
+  <Card title="Apartment" icon="building">
+    Represents rentable properties with amenities
+  </Card>
+  
+  <Card title="User" icon="user">
+    Handles user identity and roles
+  </Card>
+  
+  <Card title="Review" icon="star">
+    Manages apartment reviews and ratings
+  </Card>
+</CardGroup>
+
+### Booking Aggregate
+
+The Booking aggregate is the most complex, handling reservation state transitions:
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public sealed class Booking : Entity
+{
+    // State
+    public Guid ApartmentId { get; private set; }
+    public Guid UserId { get; private set; }
+    public DateRange Duration { get; private set; }
+    public Money PriceForPeriod { get; private set; }
+    public Money CleaningFee { get; private set; }
+    public Money AmenitiesUpCharge { get; private set; }
+    public Money TotalPrice { get; private set; }
+    public BookingStatus Status { get; private set; }
+    public DateTime CreatedOnUtc { get; private set; }
+    public DateTime? ConfirmedOnUtc { get; private set; }
+    public DateTime? RejectedOnUtc { get; private set; }
+    public DateTime? CompletedOnUtc { get; private set; }
+    public DateTime? CancelledOnUtc { get; private set; }
+
+    // Private constructor - can't create invalid bookings
+    private Booking(
+        Guid id,
+        Guid apartmentId,
+        Guid userId,
+        DateRange duration,
+        Money priceForPeriod,
+        Money cleaningFee,
+        Money amenitiesUpCharge,
+        Money totalPrice,
+        BookingStatus status,
+        DateTime createdOnUtc)
+        : base(id)
+    {
+        ApartmentId = apartmentId;
+        UserId = userId;
+        Duration = duration;
+        PriceForPeriod = priceForPeriod;
+        CleaningFee = cleaningFee;
+        AmenitiesUpCharge = amenitiesUpCharge;
+        TotalPrice = totalPrice;
+        Status = status;
+        CreatedOnUtc = createdOnUtc;
+    }
+
+    private Booking() { }
+}
+```
+
+<Note>
+All properties have private setters. The only way to modify a Booking is through its public methods, which enforce business rules.
+</Note>
+
+#### Factory Method: Reserve
+
+Creates a new booking with calculated pricing:
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public static Booking Reserve(
+    Apartment apartment,
+    Guid userId,
+    DateRange duration,
+    DateTime utcNow,
+    PricingService pricingService)
+{
+    var pricingDetails = pricingService.CalculatePrice(apartment, duration);
+
+    var booking = new Booking(
+        Guid.NewGuid(),
+        apartment.Id,
+        userId,
+        duration,
+        pricingDetails.PriceForPeriod,
+        pricingDetails.CleaningFee,
+        pricingDetails.AmenitiesUpCharge,
+        pricingDetails.TotalPrice,
+        BookingStatus.Reserved,
+        utcNow);
+
+    booking.RaiseDomainEvent(new BookingReservedDomainEvent(booking.Id));
+
+    apartment.LastBookedOnUtc = utcNow;
+
+    return booking;
+}
+```
+
+**Invariants enforced:**
+- Booking starts in `Reserved` status
+- Price is calculated consistently using `PricingService`
+- Domain event is raised for external handlers
+- Apartment's last booked date is updated
+
+#### State Transition: Confirm
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public Result Confirm(DateTime utcNow)
+{
+    if (Status != BookingStatus.Reserved)
+    {
+        return Result.Failure(BookingErrors.NotReserved);
+    }
+
+    Status = BookingStatus.Confirmed;
+    ConfirmedOnUtc = utcNow;
+
+    RaiseDomainEvent(new BookingConfirmedDomainEvent(Id));
+
+    return Result.Success();
+}
+```
+
+**Invariant:** Only reserved bookings can be confirmed.
+
+#### State Transition: Cancel
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public Result Cancel(DateTime utcNow)
+{
+    if (Status != BookingStatus.Confirmed)
+    {
+        return Result.Failure(BookingErrors.NotConfirmed);
+    }
+
+    var currentDate = DateOnly.FromDateTime(utcNow);
+
+    if (currentDate > Duration.Start)
+    {
+        return Result.Failure(BookingErrors.AlreadyStarted);
+    }
+
+    Status = BookingStatus.Cancelled;
+    CancelledOnUtc = utcNow;
+
+    RaiseDomainEvent(new BookingCancelledDomainEvent(Id));
+
+    return Result.Success();
+}
+```
+
+**Invariants:**
+- Only confirmed bookings can be cancelled
+- Can't cancel after the booking has started
+
+#### Other State Transitions
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public Result Reject(DateTime utcNow)
+{
+    if (Status != BookingStatus.Reserved)
+    {
+        return Result.Failure(BookingErrors.NotReserved);
+    }
+
+    Status = BookingStatus.Rejected;
+    RejectedOnUtc = utcNow;
+
+    RaiseDomainEvent(new BookingRejectedDomainEvent(Id));
+
+    return Result.Success();
+}
+
+public Result Complete(DateTime utcNow)
+{
+    if (Status != BookingStatus.Confirmed)
+    {
+        return Result.Failure(BookingErrors.NotConfirmed);
+    }
+
+    Status = BookingStatus.Completed;
+    CompletedOnUtc = utcNow;
+
+    RaiseDomainEvent(new BookingCompletedDomainEvent(Id));
+
+    return Result.Success();
+}
+```
+
+### Apartment Aggregate
+
+Represents a rentable property:
+
+```csharp src/Bookify.Domain/Apartments/Apartment.cs
+public sealed class Apartment : Entity
+{ 
+    public Name Name { get; private set; }
+    public Description Description { get; private set; }
+    public Address Address { get; private set; }
+    public Money Price { get; private set; }
+    public Money CleaningFee { get; private set; }
+    public DateTime? LastBookedOnUtc { get; internal set; }
+    public List<Amenity> Amenities { get; private set; } = [];
+
+    public Apartment(
+        Guid id,
+        Name name,
+        Description description,
+        Address address,
+        Money price,
+        Money cleaningFee,
+        DateTime? lastTimeBookedOnUtc,
+        List<Amenity> amenities) 
+        : base(id)
+    {
+        Name = name;
+        Description = description;
+        Address = address;
+        Price = price;
+        CleaningFee = cleaningFee;
+        LastBookedOnUtc = lastTimeBookedOnUtc;
+        Amenities = amenities;
+    }
+
+    private Apartment() { }
+}
+```
+
+<Tip>
+`LastBookedOnUtc` has an `internal` setter, allowing the Booking aggregate to update it while preventing external modification.
+</Tip>
+
+**Aggregate features:**
+- Contains value objects (`Address`, `Money`)
+- Immutable after creation (no state transition methods)
+- `LastBookedOnUtc` updated by Booking aggregate
+
+### User Aggregate
+
+Manages user identity and roles:
+
+```csharp src/Bookify.Domain/Users/Entities/User.cs
+public sealed class User : Entity
+{
+    private readonly List<Role> _roles = [];
+
+    private User(Guid id, FirstName firstName, LastName lastName, Email email)
+        : base(id)
+    {
+        FirstName = firstName;
+        LastName = lastName;
+        Email = email;
+    }
+
+    private User() { }
+
+    public FirstName FirstName { get; private set; }
+    public LastName LastName { get; private set; }
+    public Email Email { get; private set; }
+    public string IdentityId { get; private set; } = string.Empty;
+
+    public IReadOnlyCollection<Role> Roles => _roles.ToList();
+
+    public static User Create(FirstName firstName, LastName lastName, Email email)
+    {
+        var user = new User(Guid.NewGuid(), firstName, lastName, email);
+
+        user.RaiseDomainEvent(new UserCreatedDomainEvent(user.Id));
+
+        user._roles.Add(Role.Registered);
+
+        return user;
+    }
+
+    public void SetIdentityId(string identityId)
+    {
+        IdentityId = identityId;
+    }
+}
+```
+
+**Invariants:**
+- New users automatically get the `Registered` role
+- Roles are encapsulated (read-only collection)
+- Identity ID can be set (for integration with Keycloak)
+
+### Review Aggregate
+
+Handles apartment reviews:
+
+```csharp src/Bookify.Domain/Reviews/Review.cs
+public sealed class Review : Entity
+{ 
+    public Guid ApartmentId { get; private set; }
+    public Guid BookingId { get; private set; }
+    public Guid UserId { get; private set; }
+    public Rating Rating { get; private set; }
+    public Comment Comment { get; private set; }
+    public DateTime CreatedOnUtc { get; private set; }
+
+    private Review(
+        Guid id,
+        Guid apartmentId,
+        Guid bookingId,
+        Guid userId,
+        Rating rating,
+        Comment comment,
+        DateTime createdOnUtc)
+        : base(id)
+    {
+        ApartmentId = apartmentId;
+        BookingId = bookingId;
+        UserId = userId;
+        Rating = rating;
+        Comment = comment;
+        CreatedOnUtc = createdOnUtc;
+    }
+
+    private Review() { }
+
+    public static Result<Review> Create(
+        Booking booking,
+        Rating rating,
+        Comment comment,
+        DateTime createdOnUtc)
+    {
+        if (booking.Status != BookingStatus.Completed)
+        {
+            return Result.Failure<Review>(ReviewErrors.NotEligible);
+        }
+
+        var review = new Review(
+            Guid.NewGuid(),
+            booking.ApartmentId,
+            booking.Id,
+            booking.UserId,
+            rating,
+            comment,
+            createdOnUtc);
+
+        review.RaiseDomainEvent(new ReviewCreatedDomainEvent(review.Id));
+
+        return review;
+    }
+}
+```
+
+**Invariant:** Reviews can only be created for completed bookings.
+
+<Warning>
+Notice that `Review.Create` takes a `Booking` parameter to validate the business rule. This crosses aggregate boundaries but is acceptable for validation—the Review doesn't modify the Booking.
+</Warning>
+
+## Aggregate Design Principles
+
+### 1. Consistency Boundaries
+
+<AccordionGroup>
+  <Accordion title="Single Aggregate = Single Transaction">
+    Changes to a single aggregate are atomic:
+    
+    ```csharp
+    // Good: Single aggregate, single transaction
+    var booking = await bookingRepository.GetByIdAsync(id);
+    var result = booking.Confirm(utcNow);
+    await unitOfWork.SaveChangesAsync();
+    ```
+    
+    Avoid modifying multiple aggregates in one transaction:
+    
+    ```csharp
+    // Avoid: Multiple aggregates in one transaction
+    var booking = await bookingRepository.GetByIdAsync(bookingId);
+    var user = await userRepository.GetByIdAsync(userId);
+    booking.Confirm(utcNow);
+    user.UpdateSomething();
+    await unitOfWork.SaveChangesAsync(); // Risky!
+    ```
+  </Accordion>
+
+  <Accordion title="Use Domain Events for Cross-Aggregate Changes">
+    When one aggregate needs to affect another, use domain events:
+    
+    ```csharp
+    // Booking aggregate raises event
+    booking.RaiseDomainEvent(new BookingConfirmedDomainEvent(Id));
+    
+    // Handler updates other aggregates
+    public class UpdateUserStatisticsHandler 
+        : INotificationHandler<BookingConfirmedDomainEvent>
+    {
+        public async Task Handle(...)
+        {
+            // Update User aggregate in separate transaction
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### 2. Encapsulation
+
+**Private setters** prevent external modification:
+
+```csharp
+public sealed class Booking : Entity
+{
+    public BookingStatus Status { get; private set; } // Can't set externally
+    
+    // Only way to change status is through business methods
+    public Result Confirm(DateTime utcNow)
+    {
+        // Validates business rules
+        Status = BookingStatus.Confirmed;
+        return Result.Success();
+    }
+}
+```
+
+**Private constructors** force factory method usage:
+
+```csharp
+private Booking(...) { } // Can't use 'new Booking(...)' externally
+
+public static Booking Reserve(...) // Must use factory method
+{
+    var booking = new Booking(...); // Internal usage only
+    return booking;
+}
+```
+
+### 3. Invariants
+
+Aggregates enforce business rules:
+
+<CodeGroup>
+```csharp Booking Invariants
+// Can't confirm unless reserved
+if (Status != BookingStatus.Reserved)
+{
+    return Result.Failure(BookingErrors.NotReserved);
+}
+
+// Can't cancel after booking starts
+if (currentDate > Duration.Start)
+{
+    return Result.Failure(BookingErrors.AlreadyStarted);
+}
+```
+
+```csharp Review Invariants
+// Can only review completed bookings
+if (booking.Status != BookingStatus.Completed)
+{
+    return Result.Failure<Review>(ReviewErrors.NotEligible);
+}
+```
+
+```csharp User Invariants
+// New users get Registered role automatically
+var user = new User(...);
+user._roles.Add(Role.Registered);
+```
+</CodeGroup>
+
+### 4. Small Aggregates
+
+Bookify follows the "small aggregate" principle:
+
+<Check>**Good:** Booking aggregate contains only booking data</Check>
+<Check>**Good:** User aggregate contains only user data</Check>
+<Check>**Good:** References to other aggregates via ID (ApartmentId, UserId)</Check>
+
+<Warning>
+**Avoid:** Large aggregates with nested entity graphs
+```csharp
+// Don't do this
+public class Booking
+{
+    public User User { get; set; } // Should be UserId
+    public Apartment Apartment { get; set; } // Should be ApartmentId
+}
+```
+</Warning>
+
+## Working with Aggregates
+
+### Loading Aggregates
+
+```csharp src/Bookify.Application/Bookings/ReserveBooking/ReserveBookingCommandHandler.cs
+public async Task<Result<Guid>> Handle(
+    ReserveBookingCommand request,
+    CancellationToken cancellationToken)
+{
+    // Load aggregates by ID
+    var user = await userRepository.GetByIdAsync(
+        request.UserId, 
+        cancellationToken);
+
+    if (user is null)
+    {
+        return Result.Failure<Guid>(UserErrors.NotFound);
+    }
+
+    var apartment = await apartmentRepository.GetByIdAsync(
+        request.ApartmentId, 
+        cancellationToken);
+
+    if (apartment is null)
+    {
+        return Result.Failure<Guid>(ApartmentErrors.NotFound);
+    }
+
+    // Create new aggregate
+    var booking = Booking.Reserve(
+        apartment,
+        user.Id,
+        duration,
+        _dateTimeProvider.UtcNow,
+        pricingService);
+
+    bookingRepository.Add(booking);
+    await unitOfWork.SaveChangesAsync(cancellationToken);
+
+    return booking.Id;
+}
+```
+
+### Modifying Aggregates
+
+Only call methods on the aggregate root:
+
+```csharp
+var booking = await bookingRepository.GetByIdAsync(id);
+
+// Good: Use aggregate methods
+var result = booking.Confirm(utcNow);
+
+if (result.IsFailure)
+{
+    return result.Error;
+}
+
+await unitOfWork.SaveChangesAsync();
+```
+
+### Aggregate Repositories
+
+Repositories operate on aggregate roots:
+
+```csharp
+public interface IBookingRepository
+{
+    Task<Booking?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    
+    void Add(Booking booking);
+    
+    Task<bool> IsOverlappingAsync(
+        Apartment apartment, 
+        DateRange duration, 
+        CancellationToken cancellationToken);
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One Transaction Per Aggregate" icon="database">
+    Don't modify multiple aggregates in a single transaction. Use domain events for coordination.
+  </Card>
+  
+  <Card title="Reference by ID" icon="hashtag">
+    Aggregates should reference other aggregates by ID, not object references.
+  </Card>
+  
+  <Card title="Private Setters" icon="lock">
+    Use private setters and expose behavior through methods that enforce invariants.
+  </Card>
+  
+  <Card title="Factory Methods" icon="industry">
+    Use static factory methods to create valid aggregates with all invariants satisfied.
+  </Card>
+  
+  <Card title="Raise Domain Events" icon="bell">
+    Notify other parts of the system about important state changes using domain events.
+  </Card>
+  
+  <Card title="Return Result" icon="circle-check">
+    Use the Result pattern to explicitly handle business rule violations.
+  </Card>
+</CardGroup>
+
+## Summary
+
+Aggregates in Bookify:
+
+- **Enforce business rules** through encapsulated methods
+- **Maintain consistency** within well-defined boundaries
+- **Use value objects** for type-safe domain concepts
+- **Raise domain events** for cross-aggregate communication
+- **Return Results** for explicit error handling
+- **Provide factory methods** for creation with validated invariants
+
+<Card title="Back to Core Concepts" icon="arrow-left" href="/concepts/result-pattern">
+  Review the Result pattern for error handling
+</Card>

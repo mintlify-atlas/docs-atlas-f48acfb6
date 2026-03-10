@@ -1,0 +1,315 @@
+---
+title: 'Authentication'
+description: 'Set up Keycloak JWT authentication in Bookify'
+---
+
+Bookify uses Keycloak as its identity provider for JWT-based authentication. This guide walks you through setting up authentication, obtaining tokens, and protecting your API endpoints.
+
+## Overview
+
+The authentication system consists of:
+- **Keycloak**: Identity and access management server
+- **JWT Tokens**: Bearer tokens for API authentication
+- **ASP.NET Core JWT Bearer**: Middleware for token validation
+- **Authorization Policies**: Role-based and permission-based access control
+
+## Keycloak Setup
+
+### Configuration
+
+Keycloak settings are configured in `appsettings.Development.json`:
+
+```json
+"Authentication": {
+  "Audience": "account",
+  "ValidIssuer": "http://bookify-idp:8080/realms/Bookify",
+  "MetadataUrl": "http://bookify-idp:8080/realms/Bookify/.well-known/openid-configuration",
+  "RequireHttpsMetadata": false
+},
+"Keycloak": {
+  "BaseUrl": "http://bookify-idp:8080",
+  "AdminUrl": "http://bookify-idp:8080/admin/realms/Bookify/",
+  "TokenUrl": "http://bookify-idp:8080/realms/Bookify/protocol/openid-connect/token",
+  "AdminClientId": "bookify-admin-client",
+  "AdminClientSecret": "igu5nMmf4ucHnafsprKAyXq5uCpZztWs",
+  "AuthClientId": "bookify-auth-client",
+  "AuthClientSecret": "rZjRoaaamQmVtluhM8RN227GqtKzzZg5"
+}
+```
+
+<Note>
+In production, store client secrets in environment variables or a secure secrets manager, not in appsettings files.
+</Note>
+
+### Docker Compose Configuration
+
+Keycloak runs as a containerized service:
+
+```yaml
+services:
+  bookify-idp:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: Bookify.Identity
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    volumes:
+      - ./.containers/identity:/opt/keycloak/data
+      - ./.files/bookify-realm-export.json:/opt/keycloak/data/import/realm.json
+    ports:
+      - 18080:8080
+```
+
+Access the Keycloak admin console at `http://localhost:18080` with credentials `admin`/`admin`.
+
+## Authentication Flow
+
+<Steps>
+
+### Register a new user
+
+Send a POST request to `/api/users/register`:
+
+```bash
+curl -X POST http://localhost:5001/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "firstName": "John",
+    "lastName": "Doe",
+    "password": "SecurePassword123!"
+  }'
+```
+
+This creates a user in both the Bookify database and Keycloak.
+
+### Obtain an access token
+
+Login using the `/api/users/login` endpoint:
+
+```bash
+curl -X POST http://localhost:5001/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+Response:
+
+```json
+{
+  "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+### Make authenticated requests
+
+Include the access token in the `Authorization` header:
+
+```bash
+curl http://localhost:5001/api/apartments \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+</Steps>
+
+## Implementation Details
+
+### JWT Service
+
+The `JwtService` (src/Bookify.Infrastructure/Authentication/JwtService.cs:24) handles token acquisition:
+
+```csharp
+public async Task<Result<string>> GetAccessTokenAsync(
+    string email,
+    string password,
+    CancellationToken cancellationToken = default)
+{
+    var authRequestParameters = new KeyValuePair<string, string>[]
+    {
+        new("client_id", _keycloakOptions.AuthClientId),
+        new("client_secret", _keycloakOptions.AuthClientSecret),
+        new("scope", "openid email"),
+        new("grant_type", "password"),
+        new("username", email),
+        new("password", password)
+    };
+
+    var authorizationRequestContent = new FormUrlEncodedContent(authRequestParameters);
+    var response = await _httpClient.PostAsync("", authorizationRequestContent, cancellationToken);
+    
+    response.EnsureSuccessStatusCode();
+    
+    var authorizationToken = await response.Content.ReadFromJsonAsync<AuthorizationToken>(cancellationToken: cancellationToken);
+    
+    return authorizationToken.AccessToken;
+}
+```
+
+### User Registration
+
+The `AuthenticationService` (src/Bookify.Infrastructure/Authentication/AuthenticationService.cs:19) registers users in Keycloak:
+
+```csharp
+public async Task<string> RegisterAsync(
+    User user,
+    string password,
+    CancellationToken cancellationToken = default)
+{
+    var userRepresentationModel = UserRepresentationModel.FromUser(user);
+
+    userRepresentationModel.Credentials = new CredentialRepresentationModel[]
+    {
+        new()
+        {
+            Value = password,
+            Temporary = false,
+            Type = "password"
+        }
+    };
+
+    var response = await _httpClient.PostAsJsonAsync(
+        "users",
+        userRepresentationModel,
+        cancellationToken);
+
+    return ExtractIdentityIdFromLocationHeader(response);
+}
+```
+
+## Authorization
+
+### Protecting Endpoints
+
+By default, all endpoints require authentication. Use `[AllowAnonymous]` for public endpoints:
+
+```csharp
+[AllowAnonymous]
+[HttpPost("register")]
+public async Task<IActionResult> Register(
+    RegisterUserRequest request,
+    CancellationToken cancellationToken)
+{
+    // Registration logic
+}
+```
+
+### Role-Based Authorization
+
+Bookify includes role-based authorization. The `Registered` role is defined in src/Bookify.Api/Controllers/Roles.cs:4:
+
+```csharp
+public static class Roles
+{
+    public const string Registered = "Registered";
+}
+```
+
+Apply role requirements using the `[Authorize]` attribute:
+
+```csharp
+[Authorize(Roles = Roles.Registered)]
+[HttpPost]
+public async Task<IActionResult> ReserveBooking(
+    ReserveBookingRequest request,
+    CancellationToken cancellationToken)
+{
+    // Booking logic
+}
+```
+
+### Accessing User Context
+
+Inject `IUserContext` to access the authenticated user:
+
+```csharp
+public class MyService
+{
+    private readonly IUserContext _userContext;
+
+    public MyService(IUserContext userContext)
+    {
+        _userContext = userContext;
+    }
+
+    public void DoSomething()
+    {
+        var userId = _userContext.UserId;
+        var email = _userContext.Email;
+    }
+}
+```
+
+## Dependency Injection Setup
+
+Authentication is configured in src/Bookify.Infrastructure/DependencyInjection.cs:84:
+
+```csharp
+private static void AddAuthentication(IServiceCollection services, IConfiguration configuration)
+{
+    services
+        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer();
+
+    services.Configure<AuthenticationOptions>(configuration.GetSection("Authentication"));
+    services.ConfigureOptions<JwtBearerOptionsSetup>();
+    services.Configure<KeycloakOptions>(configuration.GetSection("Keycloak"));
+
+    services.AddTransient<AdminAuthorizationDelegatingHandler>();
+
+    services.AddHttpClient<IAuthenticationService, AuthenticationService>((serviceProvider, httpClient) =>
+    {
+        var keycloakOptions = serviceProvider.GetRequiredService<IOptions<KeycloakOptions>>().Value;
+        httpClient.BaseAddress = new Uri(keycloakOptions.AdminUrl);
+    })
+    .AddHttpMessageHandler<AdminAuthorizationDelegatingHandler>();
+
+    services.AddHttpClient<IJwtService, JwtService>((serviceProvider, httpClient) =>
+    {
+        var keycloakOptions = serviceProvider.GetRequiredService<IOptions<KeycloakOptions>>().Value;
+        httpClient.BaseAddress = new Uri(keycloakOptions.TokenUrl);
+    });
+
+    services.AddHttpContextAccessor();
+    services.AddScoped<IUserContext, UserContext>();
+}
+```
+
+## Troubleshooting
+
+### Token Validation Fails
+
+Ensure the `ValidIssuer` matches your Keycloak realm configuration. Use the metadata URL to verify:
+
+```bash
+curl http://localhost:18080/realms/Bookify/.well-known/openid-configuration
+```
+
+### 401 Unauthorized
+
+Check that:
+1. The token is not expired
+2. The `Authorization` header format is `Bearer <token>`
+3. The token was issued by the correct realm
+4. The API audience matches the configuration
+
+### User Registration Fails
+
+Verify:
+1. Keycloak is running and accessible
+2. The admin client credentials are correct
+3. The user email is not already registered
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Health Checks" icon="heart-pulse" href="/guides/health-checks">
+    Monitor Keycloak availability
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/users/register">
+    View authentication endpoints
+  </Card>
+</CardGroup>

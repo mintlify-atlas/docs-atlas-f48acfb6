@@ -1,0 +1,486 @@
+---
+title: Installation
+description: Set up Bookify for local development without Docker
+---
+
+## Local Development Setup
+
+This guide walks you through setting up Bookify for local development without Docker, giving you full control over each component.
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+<CardGroup cols={2}>
+  <Card title=".NET 9 SDK" icon="microsoft">
+    Download from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/9.0)
+  </Card>
+  <Card title="PostgreSQL 16+" icon="database">
+    Download from [postgresql.org](https://www.postgresql.org/download/)
+  </Card>
+  <Card title="Redis" icon="server">
+    Download from [redis.io](https://redis.io/download)
+  </Card>
+  <Card title="Git" icon="git">
+    Download from [git-scm.com](https://git-scm.com/downloads)
+  </Card>
+</CardGroup>
+
+### Optional but Recommended
+
+- **Keycloak** - For authentication (can run in Docker even if API runs locally)
+- **Seq** - For structured logging (optional, logs will go to console otherwise)
+- **Your favorite IDE** - Visual Studio 2022, JetBrains Rider, or VS Code
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/yourusername/bookify.git
+    cd bookify
+    ```
+  </Step>
+
+  <Step title="Restore NuGet Packages">
+    Restore all dependencies for the solution:
+
+    ```bash
+    dotnet restore Bookify.sln
+    ```
+
+    This will download all required NuGet packages:
+    - **MediatR** (12.4.1) - CQRS implementation
+    - **FluentValidation** (11.11.0) - Request validation
+    - **Npgsql.EntityFrameworkCore.PostgreSQL** (9.0.2) - PostgreSQL provider
+    - **Serilog.AspNetCore** (9.0.0) - Structured logging
+    - **StackExchange.Redis** (9.0.2) - Redis caching
+    - And more...
+
+    <Note>
+      The restore command analyzes dependencies across all four projects:
+      - `Bookify.Api`
+      - `Bookify.Application`
+      - `Bookify.Infrastructure`
+      - `Bookify.Domain`
+    </Note>
+  </Step>
+
+  <Step title="Set Up PostgreSQL Database">
+    Create a new PostgreSQL database:
+
+    ```bash
+    # Connect to PostgreSQL
+    psql -U postgres
+
+    # Create the database
+    CREATE DATABASE "BookifyDb";
+
+    # Exit psql
+    \q
+    ```
+
+    <Note>
+      The default connection string expects PostgreSQL on `localhost:4001`. If you're using the default port 5432, update the connection string in the next step.
+    </Note>
+  </Step>
+
+  <Step title="Configure Application Settings">
+    Update the connection strings in `src/Bookify.Api/appsettings.Development.json`:
+
+    ```json
+    {
+      "ConnectionStrings": {
+        "Database": "Server=localhost;Port=5432;Database=BookifyDb;User Id=postgres;Password=YOUR_PASSWORD;Include Error Detail=true",
+        "Cache": "localhost:6379"
+      }
+    }
+    ```
+
+    <Warning>
+      Replace `YOUR_PASSWORD` with your actual PostgreSQL password. Never commit credentials to version control!
+    </Warning>
+
+    ### Using User Secrets (Recommended)
+
+    For better security, use .NET User Secrets instead:
+
+    ```bash
+    cd src/Bookify.Api
+    
+    dotnet user-secrets set "ConnectionStrings:Database" "Server=localhost;Port=5432;Database=BookifyDb;User Id=postgres;Password=YOUR_PASSWORD;Include Error Detail=true"
+    
+    dotnet user-secrets set "ConnectionStrings:Cache" "localhost:6379"
+    ```
+  </Step>
+
+  <Step title="Start Redis">
+    Start your local Redis server:
+
+    <CodeGroup>
+    ```bash Linux/macOS
+    redis-server
+    ```
+
+    ```bash Windows
+    # If installed via Chocolatey or MSI
+    redis-server.exe
+
+    # Or use WSL
+    wsl redis-server
+    ```
+
+    ```bash Docker (Alternative)
+    docker run -d -p 6379:6379 --name bookify-redis redis:latest
+    ```
+    </CodeGroup>
+
+    Verify Redis is running:
+    ```bash
+    redis-cli ping
+    # Should respond with: PONG
+    ```
+  </Step>
+
+  <Step title="Run Database Migrations">
+    Apply Entity Framework Core migrations to set up the database schema:
+
+    ```bash
+    cd src/Bookify.Api
+    dotnet ef database update
+    ```
+
+    This creates all necessary tables:
+    - `apartments` - Apartment listings
+    - `bookings` - Booking records
+    - `users` - User accounts
+    - `reviews` - Apartment reviews
+    - And supporting tables for value objects and relationships
+
+    <Note>
+      Migrations are automatically applied when running in Development mode, but running manually gives you more control.
+    </Note>
+
+    ### Verify Migration Success
+
+    ```bash
+    psql -U postgres -d BookifyDb -c "\dt"
+    ```
+
+    You should see all the tables listed.
+  </Step>
+
+  <Step title="Start Keycloak (Optional)">
+    For authentication to work, start Keycloak:
+
+    ```bash
+    docker run -d \
+      --name bookify-keycloak \
+      -p 18080:8080 \
+      -e KEYCLOAK_ADMIN=admin \
+      -e KEYCLOAK_ADMIN_PASSWORD=admin \
+      quay.io/keycloak/keycloak:latest \
+      start-dev
+    ```
+
+    <Warning>
+      Without Keycloak, authenticated endpoints will fail. You can skip this if you're only testing public endpoints.
+    </Warning>
+
+    ### Import Bookify Realm
+
+    If you have the realm configuration file:
+    ```bash
+    # Access Keycloak admin console at http://localhost:18080
+    # Login with admin/admin
+    # Import the realm from .files/bookify-realm-export.json
+    ```
+  </Step>
+
+  <Step title="Build the Solution">
+    Build the entire solution to ensure everything compiles:
+
+    ```bash
+    dotnet build Bookify.sln --configuration Debug
+    ```
+
+    You should see:
+    ```
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+    ```
+  </Step>
+
+  <Step title="Run the Application">
+    Start the Bookify API:
+
+    ```bash
+    cd src/Bookify.Api
+    dotnet run
+    ```
+
+    You should see output like:
+    ```
+    info: Microsoft.Hosting.Lifetime[14]
+          Now listening on: https://localhost:7001
+    info: Microsoft.Hosting.Lifetime[14]
+          Now listening on: http://localhost:5000
+    info: Microsoft.Hosting.Lifetime[0]
+          Application started. Press Ctrl+C to shut down.
+    ```
+
+    <Note>
+      The application will automatically:
+      - Apply pending migrations
+      - Seed sample data (in Development mode)
+      - Configure Serilog logging
+      - Register health checks
+    </Note>
+  </Step>
+
+  <Step title="Verify Installation">
+    Test the API is working:
+
+    ```bash
+    # Check health endpoint
+    curl https://localhost:7001/health
+
+    # Search apartments
+    curl "https://localhost:7001/api/apartments?startDate=2026-04-01&endDate=2026-04-07"
+    ```
+
+    Open Swagger UI in your browser:
+    ```
+    https://localhost:7001/swagger
+    ```
+  </Step>
+</Steps>
+
+## Project Structure
+
+Understanding the solution structure:
+
+```
+Bookify/
+├── src/
+│   ├── Bookify.Api/              # Web API layer
+│   │   ├── Controllers/          # API endpoints
+│   │   ├── Extensions/           # Custom middleware
+│   │   ├── Program.cs           # Application entry point
+│   │   └── appsettings.json     # Configuration
+│   │
+│   ├── Bookify.Application/      # Application layer
+│   │   ├── Apartments/          # Apartment features
+│   │   ├── Bookings/            # Booking features
+│   │   ├── Users/               # User features
+│   │   ├── Reviews/             # Review features
+│   │   ├── Abstractions/        # Interfaces & base classes
+│   │   └── DependencyInjection.cs
+│   │
+│   ├── Bookify.Domain/           # Domain layer
+│   │   ├── Apartments/          # Apartment entity & value objects
+│   │   ├── Bookings/            # Booking entity & services
+│   │   ├── Users/               # User entity
+│   │   ├── Reviews/             # Review entity
+│   │   └── Abstractions/        # Domain primitives
+│   │
+│   └── Bookify.Infrastructure/   # Infrastructure layer
+│       ├── Repositories/        # EF Core repositories
+│       ├── Authentication/      # Keycloak integration
+│       ├── Caching/             # Redis caching
+│       ├── Migrations/          # EF Core migrations
+│       └── DependencyInjection.cs
+│
+├── Bookify.sln                  # Solution file
+└── docker-compose.yml           # Docker orchestration
+```
+
+## Configuration Reference
+
+Key configuration sections in `appsettings.Development.json`:
+
+<CodeGroup>
+```json Connection Strings
+{
+  "ConnectionStrings": {
+    "Database": "Server=localhost;Port=5432;Database=BookifyDb;User Id=postgres;Password=postgres;Include Error Detail=true",
+    "Cache": "localhost:6379"
+  }
+}
+```
+
+```json Authentication
+{
+  "Authentication": {
+    "Audience": "account",
+    "ValidIssuer": "http://localhost:18080/realms/Bookify",
+    "MetadataUrl": "http://localhost:18080/realms/Bookify/.well-known/openid-configuration",
+    "RequireHttpsMetadata": false
+  }
+}
+```
+
+```json Keycloak
+{
+  "Keycloak": {
+    "BaseUrl": "http://localhost:18080",
+    "AdminUrl": "http://localhost:18080/admin/realms/Bookify/",
+    "TokenUrl": "http://localhost:18080/realms/Bookify/protocol/openid-connect/token",
+    "AdminClientId": "bookify-admin-client",
+    "AdminClientSecret": "your-admin-secret",
+    "AuthClientId": "bookify-auth-client",
+    "AuthClientSecret": "your-auth-secret"
+  }
+}
+```
+
+```json Serilog
+{
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Information"
+      }
+    },
+    "WriteTo": [
+      { "Name": "Console" }
+    ]
+  }
+}
+```
+</CodeGroup>
+
+## Development Workflow
+
+### Adding a New Migration
+
+When you modify domain entities:
+
+```bash
+cd src/Bookify.Api
+dotnet ef migrations add YourMigrationName
+dotnet ef database update
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+dotnet test
+
+# Run with coverage
+dotnet test /p:CollectCoverage=true
+```
+
+### Watching for Changes
+
+Use the watch command for automatic rebuilds:
+
+```bash
+cd src/Bookify.Api
+dotnet watch run
+```
+
+## IDE Setup
+
+### Visual Studio 2022
+
+1. Open `Bookify.sln`
+2. Set `Bookify.Api` as the startup project
+3. Press F5 to run with debugging
+
+### JetBrains Rider
+
+1. Open `Bookify.sln`
+2. Run configuration is auto-detected
+3. Use the Run button or Shift+F10
+
+### Visual Studio Code
+
+1. Install C# Dev Kit extension
+2. Open the project folder
+3. Use the Run and Debug panel (Ctrl+Shift+D)
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Migration fails with 'relation already exists'">
+    Drop the database and recreate:
+    ```bash
+    dotnet ef database drop --force
+    dotnet ef database update
+    ```
+  </Accordion>
+
+  <Accordion title="Cannot connect to PostgreSQL">
+    Verify PostgreSQL is running:
+    ```bash
+    # Check status
+    pg_isready
+
+    # Test connection
+    psql -U postgres -d BookifyDb
+    ```
+  </Accordion>
+
+  <Accordion title="Redis connection failed">
+    Verify Redis is running:
+    ```bash
+    redis-cli ping
+    ```
+    
+    If using WSL, ensure Redis is started in the WSL environment.
+  </Accordion>
+
+  <Accordion title="Package restore fails">
+    Clear NuGet cache and retry:
+    ```bash
+    dotnet nuget locals all --clear
+    dotnet restore --force
+    ```
+  </Accordion>
+
+  <Accordion title="Keycloak authentication errors">
+    Ensure:
+    - Keycloak is running on port 18080
+    - The realm is properly imported
+    - Client secrets match your configuration
+    - `RequireHttpsMetadata` is set to `false` for local development
+  </Accordion>
+
+  <Accordion title="Application won't start">
+    Check the logs in the console output. Common issues:
+    - Connection string is incorrect
+    - Database doesn't exist
+    - Redis is not running
+    - Port conflicts (default ports: 5000, 7001)
+  </Accordion>
+</AccordionGroup>
+
+## Environment Variables
+
+You can override configuration using environment variables:
+
+```bash
+# Bash/Linux/macOS
+export ConnectionStrings__Database="Server=localhost;Port=5432;Database=BookifyDb;User Id=postgres;Password=mypassword"
+export ConnectionStrings__Cache="localhost:6379"
+dotnet run
+
+# PowerShell
+$env:ConnectionStrings__Database="Server=localhost;Port=5432;Database=BookifyDb;User Id=postgres;Password=mypassword"
+$env:ConnectionStrings__Cache="localhost:6379"
+dotnet run
+```
+
+## Next Steps
+
+Now that you have Bookify running locally:
+
+- Explore the [Architecture](/architecture/overview) to understand the codebase
+- Learn about [CQRS Implementation](/architecture/cqrs-pattern) using MediatR
+- Study the [Domain Model](/architecture/domain-driven-design) and business rules
+- Review [Authentication](/authentication) with Keycloak
+- Check out [Caching Strategies](/caching) with Redis

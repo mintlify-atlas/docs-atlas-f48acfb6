@@ -1,0 +1,178 @@
+---
+title: Register User
+description: Create a new user account
+---
+
+<Note>
+  This endpoint does not require authentication and can be accessed anonymously.
+</Note>
+
+## Endpoint
+
+```
+POST /api/users/register
+```
+
+Register a new user account in the Bookify system. After registration, use the [Login](/api-reference/users/login) endpoint to obtain an access token.
+
+## Request Body
+
+<ParamField body="email" type="string" required>
+  User's email address. Must be a valid email format and unique in the system.
+  
+  Example: `john.doe@example.com`
+</ParamField>
+
+<ParamField body="firstName" type="string" required>
+  User's first name.
+  
+  Example: `John`
+</ParamField>
+
+<ParamField body="lastName" type="string" required>
+  User's last name.
+  
+  Example: `Doe`
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password. Should meet security requirements:
+  - Minimum 8 characters
+  - At least one uppercase letter
+  - At least one lowercase letter
+  - At least one number
+  - At least one special character
+  
+  Example: `SecurePass123!`
+</ParamField>
+
+## Response
+
+On successful registration, returns the unique identifier (UUID) of the newly created user account.
+
+## Example Request
+
+```bash
+curl -X POST "https://api.bookify.com/api/users/register" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john.doe@example.com",
+    "firstName": "John",
+    "lastName": "Doe",
+    "password": "SecurePass123!"
+  }'
+```
+
+## Example Response
+
+**Status Code:** `200 OK`
+
+```json
+"7b9c3d1e-4f2a-5c6d-8e9f-0a1b2c3d4e5f"
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+Returned when the request contains invalid data or violates validation rules.
+
+```json
+{
+  "code": "User.EmailAlreadyExists",
+  "message": "A user with this email address already exists"
+}
+```
+
+**Common error codes:**
+
+- `Validation.Error` - Invalid request format or missing required fields
+- `User.EmailAlreadyExists` - An account with this email already exists
+- `User.InvalidEmail` - Email format is invalid
+- `User.WeakPassword` - Password does not meet security requirements
+- `User.InvalidName` - First name or last name contains invalid characters
+
+**Example validation error:**
+
+```json
+{
+  "code": "Validation.Error",
+  "message": "Email is required"
+}
+```
+
+### 500 Internal Server Error
+
+Returned when an unexpected server error occurs.
+
+```json
+{
+  "code": "Server.Error",
+  "message": "An unexpected error occurred while processing your request"
+}
+```
+
+## Password Requirements
+
+Passwords must meet the following criteria:
+
+- **Minimum length:** 8 characters
+- **Uppercase letters:** At least one (A-Z)
+- **Lowercase letters:** At least one (a-z)
+- **Numbers:** At least one (0-9)
+- **Special characters:** At least one (!@#$%^&*)
+
+<Warning>
+  Passwords are securely hashed and salted before storage. Never share your password or include it in client-side code.
+</Warning>
+
+## After Registration
+
+Once registered, you can:
+
+1. **Login** to obtain an access token using the [Login](/api-reference/users/login) endpoint
+2. **Make bookings** using your user ID returned from this endpoint
+3. **Access protected endpoints** with your authentication token
+
+## Usage Notes
+
+- Email addresses are case-insensitive and unique across the system
+- The user account is immediately active upon registration
+- No email verification is currently required (may change in future versions)
+- Store the returned user ID if you need to make bookings immediately
+
+## Example: Complete Registration Flow
+
+```bash
+# 1. Register a new user
+USER_ID=$(curl -X POST "https://api.bookify.com/api/users/register" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane.smith@example.com",
+    "firstName": "Jane",
+    "lastName": "Smith",
+    "password": "MySecurePass123!"
+  }' | jq -r '.')
+
+echo "User ID: $USER_ID"
+
+# 2. Login to get access token
+TOKEN=$(curl -X POST "https://api.bookify.com/api/users/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane.smith@example.com",
+    "password": "MySecurePass123!"
+  }' | jq -r '.accessToken')
+
+echo "Access Token: $TOKEN"
+
+# 3. Access protected endpoints
+curl -X GET "https://api.bookify.com/api/users/me" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Related Endpoints
+
+- [Login](/api-reference/users/login) - Authenticate and receive access token
+- [Get Current User](/api-reference/users/get-current-user) - Retrieve your user profile
+- [Reserve Booking](/api-reference/bookings/reserve-booking) - Create bookings with your user account

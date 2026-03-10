@@ -1,97 +1,78 @@
 ---
 title: "Introduction"
-description: "Welcome to the new home for your documentation"
+description: "A C# apartment booking management API built with Clean Architecture, CQRS, and Domain-Driven Design principles."
 ---
 
-## Setting up
+# Welcome to Bookify
 
-Get your documentation site up and running in minutes.
+Bookify is a modern apartment booking management API built with .NET 9 and C#, demonstrating enterprise-grade software architecture patterns and best practices.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+## Key Features
 
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Clean Architecture" icon="layer-group" href="/architecture/clean-architecture">
+    Distinct separation of concerns across domain, application, and infrastructure layers
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="CQRS Pattern" icon="arrow-right-arrow-left" href="/architecture/cqrs-pattern">
+    Command and query separation using MediatR for scalable request handling
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Domain-Driven Design" icon="cube" href="/architecture/domain-driven-design">
+    Rich domain models with aggregates, entities, and value objects
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="JWT Authentication" icon="shield-check" href="/guides/authentication">
+    Secure authentication and authorization via Keycloak integration
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Quick Start
 
-Everything you need to create world-class documentation.
+Get up and running with Bookify in minutes.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Set up and run the API locally with Docker
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Installation" icon="download" href="/installation">
+    Install dependencies and configure your development environment
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="API Reference" icon="book-open" href="/api-reference/overview">
+    Explore the complete API documentation
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Authentication" icon="key" href="/api-reference/authentication">
+    Learn how to authenticate your API requests
   </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Architecture Highlights
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+Bookify implements industry-standard patterns for building maintainable, testable, and scalable applications:
+
+- **Clean Architecture** - Clear separation between business logic and infrastructure concerns
+- **CQRS** - Optimized read and write operations with separate models
+- **Domain Events** - Loosely coupled communication between aggregates
+- **Result Pattern** - Type-safe error handling without exceptions
+- **Redis Caching** - Distributed caching for improved performance
+- **Health Checks** - Monitor service dependencies and database connectivity
+
+## Tech Stack
+
+<CardGroup cols={3}>
+  <Card title=".NET 9" icon="microsoft">
+    Built on the latest .NET framework
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Robust relational database with EF Core
+  </Card>
+  <Card title="Redis" icon="bolt">
+    High-performance distributed caching
+  </Card>
+  <Card title="Keycloak" icon="lock">
+    Enterprise identity and access management
+  </Card>
+  <Card title="Docker" icon="docker">
+    Containerized deployment ready
+  </Card>
+  <Card title="Serilog" icon="file-lines">
+    Structured logging with Seq integration
+  </Card>
+</CardGroup>

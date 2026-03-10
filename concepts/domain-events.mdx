@@ -1,0 +1,369 @@
+---
+title: Domain Events
+description: Understanding how Bookify uses domain events to decouple aggregates and handle side effects
+---
+
+Domain events represent something meaningful that happened in the domain. They enable aggregates to communicate without direct coupling and trigger side effects like sending emails or updating read models.
+
+## What Are Domain Events?
+
+Domain events are a key tactical pattern in Domain-Driven Design that:
+
+- **Capture significant occurrences** in your domain (e.g., "Booking Reserved", "User Created")
+- **Enable loose coupling** between aggregates
+- **Provide an audit trail** of what happened in the system
+- **Trigger side effects** without polluting domain logic
+- **Support eventual consistency** across aggregate boundaries
+
+<Info>
+Domain events are named in past tense because they represent something that has already happened: `BookingReservedDomainEvent`, not `ReserveBookingEvent`.
+</Info>
+
+## Implementation in Bookify
+
+### The IDomainEvent Interface
+
+Bookify uses MediatR for domain event infrastructure:
+
+```csharp src/Bookify.Domain/Abstractions/IDomainEvent.cs
+using MediatR;
+
+public interface IDomainEvent : INotification
+{
+}
+```
+
+By extending `INotification`, domain events integrate seamlessly with MediatR's publish-subscribe mechanism.
+
+### The Entity Base Class
+
+All domain entities inherit from the `Entity` base class, which provides event raising capabilities:
+
+```csharp src/Bookify.Domain/Abstractions/Entity.cs
+public abstract class Entity
+{
+    private readonly List<IDomainEvent> _domainEvents = [];
+    
+    public Guid Id { get; init; }
+
+    public IReadOnlyList<IDomainEvent> GetDomainEvents()
+    {
+        return _domainEvents.ToList();
+    }
+
+    public void ClearDomainEvents()
+    {
+        _domainEvents.Clear();
+    }
+
+    protected void RaiseDomainEvent(IDomainEvent domainEvent)
+    {
+        _domainEvents.Add(domainEvent);
+    }
+}
+```
+
+<Note>
+Events are stored in memory and published before the transaction commits. This ensures events are only published if the database operation succeeds.
+</Note>
+
+## Domain Event Examples
+
+### Booking Events
+
+The Booking aggregate raises events for all state transitions:
+
+```csharp src/Bookify.Domain/Bookings/Events/BookingReservedDomainEvent.cs
+public sealed record BookingReservedDomainEvent(Guid BookingId) : IDomainEvent;
+```
+
+```csharp src/Bookify.Domain/Bookings/Events/BookingConfirmedDomainEvent.cs
+public sealed record BookingConfirmedDomainEvent(Guid BookingId) : IDomainEvent;
+```
+
+```csharp src/Bookify.Domain/Bookings/Events/BookingCancelledDomainEvent.cs
+public sealed record BookingCancelledDomainEvent(Guid BookingId) : IDomainEvent;
+```
+
+Other booking events include:
+- `BookingRejectedDomainEvent`
+- `BookingCompletedDomainEvent`
+
+### User Events
+
+```csharp src/Bookify.Domain/Users/Events/UserCreatedDomainEvent.cs
+public sealed record UserCreatedDomainEvent(Guid UserId) : IDomainEvent;
+```
+
+### Review Events
+
+```csharp src/Bookify.Domain/Reviews/Events/ReviewCreatedDomainEvent.cs
+public sealed record ReviewCreatedDomainEvent(Guid ReviewId) : IDomainEvent;
+```
+
+## Raising Domain Events
+
+Events are raised inside aggregate methods when important business actions occur:
+
+### Example: Booking Reservation
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public static Booking Reserve(
+    Apartment apartment,
+    Guid userId,
+    DateRange duration,
+    DateTime utcNow,
+    PricingService pricingService)
+{
+    var pricingDetails = pricingService.CalculatePrice(apartment, duration);
+
+    var booking = new Booking(
+        Guid.NewGuid(),
+        apartment.Id,
+        userId,
+        duration,
+        pricingDetails.PriceForPeriod,
+        pricingDetails.CleaningFee,
+        pricingDetails.AmenitiesUpCharge,
+        pricingDetails.TotalPrice,
+        BookingStatus.Reserved,
+        utcNow);
+
+    // Raise domain event after state change
+    booking.RaiseDomainEvent(new BookingReservedDomainEvent(booking.Id));
+
+    apartment.LastBookedOnUtc = utcNow;
+
+    return booking;
+}
+```
+
+### Example: Booking Confirmation
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public Result Confirm(DateTime utcNow)
+{
+    if (Status != BookingStatus.Reserved)
+    {
+        return Result.Failure(BookingErrors.NotReserved);
+    }
+
+    Status = BookingStatus.Confirmed;
+    ConfirmedOnUtc = utcNow;
+
+    // Raise event after successful state transition
+    RaiseDomainEvent(new BookingConfirmedDomainEvent(Id));
+
+    return Result.Success();
+}
+```
+
+### Example: User Creation
+
+```csharp src/Bookify.Domain/Users/Entities/User.cs
+public static User Create(FirstName firstName, LastName lastName, Email email)
+{
+    var user = new User(Guid.NewGuid(), firstName, lastName, email);
+
+    user.RaiseDomainEvent(new UserCreatedDomainEvent(user.Id));
+
+    user._roles.Add(Role.Registered);
+
+    return user;
+}
+```
+
+## Publishing Domain Events
+
+Events are automatically published when changes are saved to the database. The `ApplicationDbContext` handles this:
+
+```csharp src/Bookify.Infrastructure/ApplicationDbContext.cs
+public sealed class ApplicationDbContext : DbContext, IUnitOfWork
+{
+    private readonly IPublisher _publisher;
+
+    public async Task<int> SaveChangesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Publish events before committing transaction
+            await PublishDomainEventsAsync();
+            
+            var result = base.SaveChangesAsync(cancellationToken);
+            return await result;
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConcurrencyException("Concurrency exception occurred.", ex);
+        }
+    }
+
+    private async Task PublishDomainEventsAsync()
+    {
+        var domainEvents = ChangeTracker
+            .Entries<Entity>()
+            .Select(entry => entry.Entity)
+            .SelectMany(entity =>
+            {
+                var domainEvents = entity.GetDomainEvents();
+                entity.ClearDomainEvents();
+                return domainEvents;
+            })
+            .ToList();
+
+        foreach (var domainEvent in domainEvents)
+        {
+            await _publisher.Publish(domainEvent);
+        }
+    }
+}
+```
+
+<Tip>
+Events are published **before** the transaction commits. This ensures handlers can participate in the same transaction, maintaining consistency.
+</Tip>
+
+## Handling Domain Events
+
+Event handlers implement `INotificationHandler<TEvent>` and contain the side effects:
+
+```csharp src/Bookify.Application/Bookings/ReserveBooking/BookingReservedDomainEventHandler.cs
+internal sealed class BookingReservedDomainEventHandler(
+    IBookingRepository bookingRepository,
+    IUserRepository userRepository,
+    IEmailService emailService)
+    : INotificationHandler<BookingReservedDomainEvent>
+{
+    public async Task Handle(
+        BookingReservedDomainEvent notification, 
+        CancellationToken cancellationToken)
+    {
+        var booking = await bookingRepository.GetByIdAsync(
+            notification.BookingId,
+            cancellationToken);
+
+        if (booking is null)
+        {
+            return;
+        }
+
+        var user = await userRepository.GetByIdAsync(
+            booking.UserId, 
+            cancellationToken);
+
+        if (user is null)
+        {
+            return;
+        }
+
+        // Send confirmation email
+        await emailService.SendAsync(
+            user.Email,
+            "Booking reserved!",
+            "You have 10 minutes to confirm this booking");
+    }
+}
+```
+
+## Benefits of Domain Events
+
+<CardGroup cols={2}>
+  <Card title="Decoupling" icon="link-slash">
+    Aggregates don't need to know about other aggregates or external systems. They just raise events.
+  </Card>
+  
+  <Card title="Single Responsibility" icon="circle-check">
+    Domain logic stays focused on business rules. Side effects are handled by event handlers.
+  </Card>
+  
+  <Card title="Extensibility" icon="puzzle-piece">
+    Add new event handlers without modifying existing code. Perfect for Open/Closed principle.
+  </Card>
+  
+  <Card title="Audit Trail" icon="clock-rotate-left">
+    Events provide a natural history of what happened in the system.
+  </Card>
+</CardGroup>
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Sending notifications">
+    When a booking is reserved, send a confirmation email to the user:
+    
+    ```csharp
+    // In BookingReservedDomainEventHandler
+    await emailService.SendAsync(
+        user.Email,
+        "Booking reserved!",
+        "You have 10 minutes to confirm this booking");
+    ```
+  </Accordion>
+
+  <Accordion title="Updating read models">
+    Synchronize query-optimized read models when aggregates change:
+    
+    ```csharp
+    // Potential handler
+    public class UpdateBookingStatisticsHandler 
+        : INotificationHandler<BookingConfirmedDomainEvent>
+    {
+        public async Task Handle(...)
+        {
+            // Update denormalized booking statistics
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Cross-aggregate communication">
+    When a review is created, update the apartment's rating:
+    
+    ```csharp
+    // Potential handler for ReviewCreatedDomainEvent
+    public class UpdateApartmentRatingHandler
+    {
+        // Calculate new average rating for the apartment
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Integration events">
+    Transform domain events into integration events for external systems:
+    
+    ```csharp
+    public class PublishBookingReservedIntegrationEventHandler
+    {
+        // Publish to message bus for other microservices
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Domain Events vs Integration Events
+
+| Aspect | Domain Events | Integration Events |
+|--------|---------------|--------------------|
+| **Scope** | Within a single bounded context | Across bounded contexts/services |
+| **Timing** | Before transaction commit | After transaction commit |
+| **Visibility** | Internal to the application | Published to message bus |
+| **Handlers** | In-process, same transaction | Out-of-process, eventual consistency |
+| **Purpose** | Maintain consistency, trigger side effects | Notify other systems |
+
+<Warning>
+Domain events in Bookify are published within the same transaction. If a handler fails, the entire transaction rolls back. For truly asynchronous processing, use integration events.
+</Warning>
+
+## Best Practices
+
+1. **Name events in past tense**: `BookingReserved`, not `ReserveBooking`
+2. **Keep events lightweight**: Include only the minimum data (usually just IDs)
+3. **Raise events after state changes**: Ensure the aggregate is in a consistent state
+4. **Make events immutable**: Use records for event definitions
+5. **One event per business action**: Don't raise multiple events for a single operation
+6. **Handle events idempotently**: Event handlers may be called multiple times
+
+<Card title="Next Steps" icon="arrow-right" href="/concepts/value-objects">
+  Learn how value objects provide type safety and encapsulation
+</Card>

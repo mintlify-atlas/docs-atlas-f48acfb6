@@ -1,0 +1,174 @@
+---
+title: Authentication
+description: Learn how to authenticate with the Bookify API
+---
+
+The Bookify API uses JWT (JSON Web Tokens) for authentication. Most endpoints require a valid access token to be included in the request headers.
+
+## Authentication Flow
+
+To authenticate with the Bookify API:
+
+1. **Register a user account** (one-time setup)
+2. **Login to obtain an access token**
+3. **Include the token in subsequent API requests**
+4. **Refresh or re-login when the token expires**
+
+## Obtaining an Access Token
+
+### Step 1: Register a User
+
+If you don't have an account, register using the `/api/users/register` endpoint:
+
+```bash
+curl -X POST https://api.bookify.com/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "firstName": "John",
+    "lastName": "Doe",
+    "password": "SecurePassword123!"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+}
+```
+
+### Step 2: Login
+
+Authenticate using your credentials to receive an access token:
+
+```bash
+curl -X POST https://api.bookify.com/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzZmE4NWY2NC01NzE3LTQ1NjItYjNmYy0yYzk2M2Y2NmFmYTYiLCJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJleHAiOjE3MTA1MjMyMDB9.signature"
+}
+```
+
+## Using the Access Token
+
+Include the access token in the `Authorization` header of your requests using the Bearer authentication scheme:
+
+```bash
+curl -X GET https://api.bookify.com/api/users/me \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+### Authorization Header Format
+
+```
+Authorization: Bearer <access_token>
+```
+
+## Token Expiration
+
+Access tokens have a limited lifetime (typically 1 hour). When a token expires, you'll receive a `401 Unauthorized` response:
+
+```json
+{
+  "code": "Auth.InvalidToken",
+  "message": "The access token has expired or is invalid"
+}
+```
+
+When this occurs, login again to obtain a new access token.
+
+## Authentication Technology
+
+Bookify uses **Keycloak** as its identity provider, which issues JWT tokens compliant with the OpenID Connect standard. Tokens are signed using RS256 (RSA Signature with SHA-256).
+
+### Token Validation
+
+The API validates tokens by:
+
+1. Verifying the signature using the public key from Keycloak
+2. Checking the token expiration (`exp` claim)
+3. Validating the issuer (`iss` claim)
+4. Confirming the audience (`aud` claim)
+
+## Public Endpoints
+
+The following endpoints do NOT require authentication:
+
+- `POST /api/users/register` - User registration
+- `POST /api/users/login` - User login
+
+All other endpoints require a valid access token.
+
+## Best Practices
+
+<Warning>
+  Never share your access tokens or commit them to version control. Treat them as sensitive credentials.
+</Warning>
+
+- **Store tokens securely** - Use secure storage mechanisms (e.g., encrypted storage, secure cookies)
+- **Handle expiration gracefully** - Implement automatic re-authentication when tokens expire
+- **Use HTTPS** - Always use HTTPS in production to prevent token interception
+- **Invalidate tokens** - If a token is compromised, login again to get a new one
+
+## Example: Complete Authentication Flow
+
+Here's a complete example using curl:
+
+```bash
+# 1. Register (first time only)
+curl -X POST https://api.bookify.com/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane@example.com",
+    "firstName": "Jane",
+    "lastName": "Smith",
+    "password": "MySecurePass123!"
+  }'
+
+# 2. Login to get access token
+TOKEN=$(curl -X POST https://api.bookify.com/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane@example.com",
+    "password": "MySecurePass123!"
+  }' | jq -r '.accessToken')
+
+# 3. Use the token to access protected endpoints
+curl -X GET https://api.bookify.com/api/users/me \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Troubleshooting
+
+### 401 Unauthorized
+
+If you receive a 401 status code:
+
+- Verify the token is included in the `Authorization` header
+- Ensure the header format is `Bearer <token>`
+- Check if the token has expired
+- Confirm you're using the correct token (not accidentally using a refresh token or other credential)
+
+### Invalid Credentials
+
+If login fails with incorrect credentials:
+
+```json
+{
+  "code": "User.InvalidCredentials",
+  "message": "The provided credentials are invalid"
+}
+```
+
+Verify your email and password are correct.

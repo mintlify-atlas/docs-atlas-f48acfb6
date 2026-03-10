@@ -1,0 +1,187 @@
+---
+title: Add Review
+description: Submit a review for a completed booking
+---
+
+<Warning>
+  This endpoint requires authentication. Include a valid JWT token in the Authorization header.
+</Warning>
+
+<Note>
+  This endpoint is currently under development. The implementation is not yet complete.
+</Note>
+
+## Endpoint
+
+```
+POST /api/reviews
+```
+
+Submit a review for a completed booking. Reviews can only be added for bookings that have been completed.
+
+## Request Body
+
+<ParamField body="bookingId" type="string (uuid)" required>
+  The unique identifier of the completed booking to review.
+  
+  Example: `3fa85f64-5717-4562-b3fc-2c963f66afa6`
+</ParamField>
+
+<ParamField body="rating" type="integer" required>
+  Rating score for the apartment and experience. Must be between 1 and 5.
+  
+  - `1` - Poor
+  - `2` - Fair
+  - `3` - Good
+  - `4` - Very Good
+  - `5` - Excellent
+  
+  Example: `5`
+</ParamField>
+
+<ParamField body="comment" type="string" required>
+  Written review comment describing the experience. Should provide helpful feedback for other users.
+  
+  Example: `Amazing apartment with stunning views! The host was very responsive and the location was perfect.`
+</ParamField>
+
+## Response
+
+Currently returns a simple success response while the feature is being completed.
+
+## Example Request
+
+```bash
+curl -X POST "https://api.bookify.com/api/reviews" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bookingId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "rating": 5,
+    "comment": "Amazing apartment with stunning views! The host was very responsive and the location was perfect."
+  }'
+```
+
+## Example Response
+
+**Status Code:** `200 OK`
+
+```json
+{}
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+Returned when the request contains invalid data or violates business rules.
+
+```json
+{
+  "code": "Validation.Error",
+  "message": "Rating must be between 1 and 5"
+}
+```
+
+**Common error codes:**
+
+- `Validation.Error` - Invalid request parameters
+- `Review.InvalidRating` - Rating is not between 1 and 5
+- `Review.CommentTooShort` - Comment must have minimum length
+- `Review.CommentTooLong` - Comment exceeds maximum length
+- `Booking.NotFound` - The specified booking does not exist
+- `Booking.NotCompleted` - Cannot review a booking that hasn't been completed
+- `Review.AlreadyExists` - A review has already been submitted for this booking
+- `Review.NotAuthorized` - You can only review your own bookings
+
+### 401 Unauthorized
+
+Returned when the request lacks valid authentication credentials.
+
+```json
+{
+  "code": "Auth.Unauthorized",
+  "message": "Authentication credentials are missing or invalid"
+}
+```
+
+### 500 Internal Server Error
+
+Returned when an unexpected server error occurs.
+
+```json
+{
+  "code": "Server.Error",
+  "message": "An unexpected error occurred while processing your request"
+}
+```
+
+## Usage Notes
+
+- Reviews can only be submitted for **completed** bookings (status = 4)
+- Each booking can only be reviewed **once**
+- You can only review bookings that belong to your user account
+- Rating must be an integer between 1 and 5 (inclusive)
+- Comment should be constructive and helpful for other users
+
+## Review Guidelines
+
+### Rating Scale
+
+| Rating | Label | Description |
+|--------|-------|-------------|
+| 1 | Poor | Significant issues, would not recommend |
+| 2 | Fair | Below expectations, some problems |
+| 3 | Good | Meets expectations, satisfactory experience |
+| 4 | Very Good | Exceeds expectations, highly satisfied |
+| 5 | Excellent | Outstanding experience, highly recommend |
+
+### Writing Good Reviews
+
+Helpful reviews should:
+
+- Be **specific** about what you liked or disliked
+- Mention **accuracy** of the listing description
+- Comment on **cleanliness** and maintenance
+- Describe the **location** and neighborhood
+- Evaluate **communication** with the host
+- Note any **amenities** that stood out
+- Be **honest** but respectful
+
+### Example Reviews
+
+**Excellent Review (5 stars):**
+```
+Amazing apartment with stunning views! The host was very responsive 
+and the location was perfect for exploring downtown. The apartment 
+was spotlessly clean and had all the amenities we needed. Highly 
+recommend for anyone visiting the area!
+```
+
+**Good Review (4 stars):**
+```
+Great location and comfortable apartment. The space was clean and 
+well-maintained. Only minor issue was the Wi-Fi was a bit slow, but 
+overall a very pleasant stay. Would book again.
+```
+
+**Fair Review (2 stars):**
+```
+The apartment was in a convenient location, but several issues made 
+the stay uncomfortable. The heating wasn't working properly, and the 
+host was slow to respond. The photos made it look larger than it 
+actually was.
+```
+
+## Review Workflow
+
+1. **Complete your stay** - Booking status must be "Completed"
+2. **Submit review** - Use this endpoint within a reasonable timeframe
+3. **Review published** - Your review becomes visible to other users
+4. **Host can respond** - The host may respond to your review (future feature)
+
+## Related Endpoints
+
+- [Get Booking](/api-reference/bookings/get-booking) - Check booking status before reviewing
+- [Reserve Booking](/api-reference/bookings/reserve-booking) - Create a booking
+- [Search Apartments](/api-reference/apartments/search) - Browse apartments and read reviews

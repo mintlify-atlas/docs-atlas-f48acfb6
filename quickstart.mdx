@@ -1,80 +1,314 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get Bookify running locally in 5 minutes using Docker Compose
 ---
 
-## Get started in three steps
+## Get Up and Running Fast
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will get you from zero to a fully functional Bookify API in just a few minutes using Docker Compose.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Prerequisites**: You only need Docker and Docker Compose installed. Everything else runs in containers.
 </Note>
+
+## Quick Start Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the Bookify repository to your local machine:
+
+    ```bash
+    git clone https://github.com/yourusername/bookify.git
+    cd bookify
+    ```
+  </Step>
+
+  <Step title="Start the Application">
+    Use Docker Compose to start all services (API, PostgreSQL, Redis, Keycloak, Seq):
+
+    ```bash
+    docker-compose up -d
+    ```
+
+    This command will:
+    - Build the Bookify API Docker image
+    - Start PostgreSQL database on port 4001
+    - Start Redis cache on port 6379
+    - Start Keycloak identity provider on port 18080
+    - Start Seq logging server on ports 5341 and 8081
+    - Start the Bookify API on port 5001 (HTTPS)
+
+    <Note>
+      The first run will take a few minutes to download images and build the application. Subsequent starts will be much faster.
+    </Note>
+  </Step>
+
+  <Step title="Verify Services are Running">
+    Check that all containers are running:
+
+    ```bash
+    docker-compose ps
+    ```
+
+    You should see all services with status "Up":
+    - `bookify.api`
+    - `Bookify.Db` (PostgreSQL)
+    - `Bookify.Identity` (Keycloak)
+    - `Bookify.Seq` (Logging)
+    - `Bookify.Redis` (Cache)
+  </Step>
+
+  <Step title="Check API Health">
+    Verify the API is healthy by checking the health endpoint:
+
+    ```bash
+    curl -k https://localhost:5001/health
+    ```
+
+    You should see a JSON response indicating all health checks passed:
+
+    ```json
+    {
+      "status": "Healthy",
+      "totalDuration": "00:00:00.0234567",
+      "entries": {
+        "npgsql": {
+          "status": "Healthy"
+        },
+        "redis": {
+          "status": "Healthy"
+        },
+        "keycloak": {
+          "status": "Healthy"
+        }
+      }
+    }
+    ```
+
+    <Note>
+      Use `-k` flag with curl to bypass SSL certificate validation for local development.
+    </Note>
+  </Step>
+
+  <Step title="Explore the API with Swagger">
+    Open your browser and navigate to the Swagger UI:
+
+    ```
+    https://localhost:5001/swagger
+    ```
+
+    <Warning>
+      Your browser will warn about the self-signed certificate. Accept the warning to proceed (this is safe for local development).
+    </Warning>
+
+    You'll see the interactive API documentation where you can explore and test all available endpoints.
+  </Step>
+
+  <Step title="Make Your First API Call">
+    Search for available apartments using the search endpoint:
+
+    ```bash
+    curl -k "https://localhost:5001/api/apartments?startDate=2026-04-01&endDate=2026-04-07"
+    ```
+
+    This will return a list of available apartments for the specified date range:
+
+    ```json
+    [
+      {
+        "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "name": "Luxury Downtown Apartment",
+        "description": "Beautiful apartment in the heart of the city",
+        "price": {
+          "amount": 150.00,
+          "currency": "USD"
+        },
+        "address": {
+          "country": "United States",
+          "state": "California",
+          "zipCode": "90001",
+          "city": "Los Angeles",
+          "street": "123 Main St"
+        },
+        "amenities": ["WiFi", "AirConditioning", "Parking"]
+      }
+    ]
+    ```
+
+    <Note>
+      On the first run in Development mode, the database is automatically seeded with sample apartment data, so you'll see results immediately.
+    </Note>
+  </Step>
+</Steps>
+
+## Access the Services
+
+Once everything is running, you can access:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **Bookify API** | https://localhost:5001 | N/A |
+| **Swagger UI** | https://localhost:5001/swagger | N/A |
+| **Keycloak Admin** | http://localhost:18080 | admin / admin |
+| **Seq Logs** | http://localhost:8081 | N/A |
+| **PostgreSQL** | localhost:4001 | postgres / postgres |
+| **Redis** | localhost:6379 | No password |
+
+## Understanding the Docker Setup
+
+The application uses two Docker Compose files:
+
+<CodeGroup>
+```yaml docker-compose.yml
+services:
+  bookify.api:
+    image: ${DOCKER_REGISTRY-}bookifyapi
+    build:
+      context: .
+      dockerfile: src/Bookify.Api/Dockerfile
+
+  bookify-db:
+   image: postgres:latest
+
+volumes:
+  postgres_bookifydb:
+```
+
+```yaml docker-compose.override.yml
+services:
+  bookify.api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:443;http://+:80
+      - ConnectionStrings__Database=Server=bookify-db;Port=5432;Database=BookifyDb;User Id=postgres;Password=postgres
+    ports:
+      - "5001:443"
+    depends_on:
+      - bookify-db
+
+  bookify-db:
+    container_name: Bookify.Db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=BookifyDb
+    ports:
+      - "4001:5432"
+    volumes:
+      - postgres_bookifydb:/var/lib/postgresql/data/
+
+  bookify-idp:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: Bookify.Identity
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    ports:
+      - 18080:8080
+
+  bookify-redis:
+   image: redis:latest
+   container_name: Bookify.Redis
+   ports:
+     - 6379:6379
+
+  bookify-seq:
+   image: datalust/seq:latest
+   container_name: Bookify.Seq
+   environment:
+    - ACCEPT_EULA=Y
+   ports:
+    - 5341:5341
+    - 8081:80
+```
+</CodeGroup>
+
+## Next Steps: Make a Booking
+
+Now that your API is running, try creating a booking:
+
+<Steps>
+  <Step title="Get an Authentication Token">
+    First, you'll need to authenticate with Keycloak. Use the token endpoint:
+
+    ```bash
+    curl -X POST "http://localhost:18080/realms/Bookify/protocol/openid-connect/token" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "client_id=bookify-auth-client" \
+      -d "client_secret=rZjRoaaamQmVtluhM8RN227GqtKzzZg5" \
+      -d "grant_type=client_credentials"
+    ```
+
+    Save the `access_token` from the response.
+  </Step>
+
+  <Step title="Create a Booking">
+    Use the token to reserve an apartment:
+
+    ```bash
+    curl -k -X POST "https://localhost:5001/api/bookings" \
+      -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "apartmentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "userId": "3fa85f64-5717-4562-b3fc-2c963f66afa7",
+        "startDate": "2026-04-01",
+        "endDate": "2026-04-07"
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Stopping the Application
+
+When you're done, stop all services:
+
+```bash
+# Stop containers but keep data
+docker-compose down
+
+# Stop containers and remove volumes (clean slate)
+docker-compose down -v
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    If you see errors about ports being in use, you can either:
+    - Stop the conflicting service
+    - Modify the port mappings in `docker-compose.override.yml`
+  </Accordion>
+
+  <Accordion title="Database connection failed">
+    Wait a few seconds for PostgreSQL to fully start. The API has automatic retry logic but may need a moment on first startup.
+  </Accordion>
+
+  <Accordion title="Migrations not applied">
+    In Development mode, migrations are automatically applied on startup. Check the logs:
+    ```bash
+    docker-compose logs bookify.api
+    ```
+  </Accordion>
+
+  <Accordion title="View detailed logs">
+    Check logs for any service:
+    ```bash
+    docker-compose logs -f bookify.api    # API logs
+    docker-compose logs -f bookify-db     # Database logs
+    docker-compose logs -f bookify-idp    # Keycloak logs
+    ```
+
+    Or view structured logs in Seq at http://localhost:8081
+  </Accordion>
+</AccordionGroup>
+
+## What's Next?
+
+Now that you have Bookify running:
+
+- Explore the [API Reference](/api-reference/overview) to see all available endpoints
+- Learn about the [Architecture](/architecture/overview) to understand the codebase structure
+- Check out the [Installation Guide](/installation) for local development without Docker
+- Read about [Authentication](/guides/authentication) to understand the Keycloak integration

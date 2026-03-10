@@ -1,0 +1,293 @@
+---
+title: Result Pattern
+description: Learn how Bookify uses the Result pattern for functional error handling without exceptions
+---
+
+The Result pattern is a functional programming approach to error handling that makes failures explicit and type-safe. Instead of throwing exceptions, methods return a `Result` object that can represent either success or failure.
+
+## Why Use the Result Pattern?
+
+Traditional exception-based error handling has several drawbacks:
+
+- **Hidden control flow**: Exceptions can be thrown anywhere, making code paths hard to follow
+- **Performance overhead**: Exception throwing and stack unwinding is expensive
+- **Unclear API contracts**: Method signatures don't indicate which errors can occur
+- **Easy to ignore**: Developers can forget to handle exceptions
+
+The Result pattern solves these problems by:
+
+- Making errors **explicit** in the type system
+- Forcing callers to **handle both success and failure cases**
+- Improving **performance** by avoiding exception overhead
+- Creating **self-documenting APIs** where failures are part of the contract
+
+## The Result Type
+
+Bookify implements two Result types in the Domain layer:
+
+### Result (Non-Generic)
+
+For operations that don't return a value:
+
+```csharp src/Bookify.Domain/Abstractions/Result.cs
+public class Result
+{
+    public bool IsSuccess { get; }
+    public bool IsFailure => !IsSuccess;
+    public Error Error { get; }
+
+    public static Result Success() => new(true, Error.None);
+    public static Result Failure(Error error) => new(false, error);
+}
+```
+
+### Result&lt;TValue&gt; (Generic)
+
+For operations that return a value on success:
+
+```csharp src/Bookify.Domain/Abstractions/Result.cs
+public sealed class Result<TValue> : Result
+{
+    private readonly TValue? _value;
+
+    public TValue Value => IsSuccess
+        ? _value!
+        : throw new InvalidOperationException(
+            "The value of a failure result can not be accessed.");
+
+    public static Result<TValue> Success<TValue>(TValue value) => 
+        new(value, true, Error.None);
+
+    public static Result<TValue> Failure<TValue>(Error error) => 
+        new(default, false, error);
+}
+```
+
+<Note>
+The `Value` property throws if accessed on a failed Result. Always check `IsSuccess` before accessing `Value`.
+</Note>
+
+## The Error Type
+
+Errors in Bookify are represented as immutable records with a code and description:
+
+```csharp src/Bookify.Domain/Abstractions/Error.cs
+public record Error(string Code, string Name)
+{
+    public static readonly Error None = new(string.Empty, string.Empty);
+    public static readonly Error NullValue = 
+        new("Error.NullValue", "Null value was provided");
+}
+```
+
+Domain-specific errors are defined as static readonly fields:
+
+```csharp src/Bookify.Domain/Bookings/BookingErrors.cs
+public static class BookingErrors
+{
+    public static readonly Error NotFound = new(
+        "Booking.Found",
+        "The booking with the specified identifier was not found");
+
+    public static readonly Error Overlap = new(
+        "Booking.Overlap",
+        "The current booking is overlapping with an existing one");
+
+    public static readonly Error NotReserved = new(
+        "Booking.NotReserved",
+        "The booking is not pending");
+
+    public static readonly Error AlreadyStarted = new(
+        "Booking.AlreadyStarted",
+        "The booking has already started");
+}
+```
+
+## Real-World Usage
+
+### Returning Results from Domain Methods
+
+Aggregate methods return Result to indicate success or domain rule violations:
+
+```csharp src/Bookify.Domain/Bookings/Booking.cs
+public Result Confirm(DateTime utcNow)
+{
+    if (Status != BookingStatus.Reserved)
+    {
+        return Result.Failure(BookingErrors.NotReserved);
+    }
+
+    Status = BookingStatus.Confirmed;
+    ConfirmedOnUtc = utcNow;
+
+    RaiseDomainEvent(new BookingConfirmedDomainEvent(Id));
+
+    return Result.Success();
+}
+
+public Result Cancel(DateTime utcNow)
+{
+    if (Status != BookingStatus.Confirmed)
+    {
+        return Result.Failure(BookingErrors.NotConfirmed);
+    }
+
+    var currentDate = DateOnly.FromDateTime(utcNow);
+
+    if (currentDate > Duration.Start)
+    {
+        return Result.Failure(BookingErrors.AlreadyStarted);
+    }
+
+    Status = BookingStatus.Cancelled;
+    CancelledOnUtc = utcNow;
+
+    RaiseDomainEvent(new BookingCancelledDomainEvent(Id));
+
+    return Result.Success();
+}
+```
+
+### Handling Results in Application Layer
+
+Command handlers return `Result<T>` to the API layer:
+
+```csharp src/Bookify.Application/Bookings/ReserveBooking/ReserveBookingCommandHandler.cs
+public async Task<Result<Guid>> Handle(
+    ReserveBookingCommand request,
+    CancellationToken cancellationToken)
+{
+    var user = await userRepository.GetByIdAsync(
+        request.UserId, 
+        cancellationToken);
+
+    if (user is null)
+    {
+        return Result.Failure<Guid>(UserErrors.NotFound);
+    }
+
+    var apartment = await apartmentRepository.GetByIdAsync(
+        request.ApartmentId, 
+        cancellationToken);
+
+    if (apartment is null)
+    {
+        return Result.Failure<Guid>(ApartmentErrors.NotFound);
+    }
+
+    var duration = DateRange.Create(request.StartDate, request.EndDate);
+
+    if (await bookingRepository.IsOverlappingAsync(
+        apartment, duration, cancellationToken))
+    {
+        return Result.Failure<Guid>(BookingErrors.Overlap);
+    }
+
+    var booking = Booking.Reserve(
+        apartment,
+        user.Id,
+        duration,
+        _dateTimeProvider.UtcNow,
+        pricingService);
+
+    bookingRepository.Add(booking);
+    await unitOfWork.SaveChangesAsync(cancellationToken);
+
+    return booking.Id; // Implicit conversion to Result<Guid>
+}
+```
+
+### Creating Value Objects with Result
+
+Value objects use Result for validation:
+
+```csharp src/Bookify.Domain/Reviews/ValueObjects/Rating.cs
+public sealed record Rating
+{
+    public static readonly Error Invalid = 
+        new("Rating.Invalid", "The rating is invalid");
+
+    private Rating(int value) => Value = value;
+
+    public int Value { get; init; }
+
+    public static Result<Rating> Create(int value)
+    {
+        if (value < 1 || value > 5)
+        {
+            return Result.Failure<Rating>(Invalid);
+        }
+
+        return new Rating(value);
+    }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always check IsSuccess before accessing Value">
+    ```csharp
+    var result = Rating.Create(ratingValue);
+    
+    if (result.IsFailure)
+    {
+        // Handle error
+        return result.Error;
+    }
+    
+    var rating = result.Value; // Safe to access
+    ```
+  </Accordion>
+
+  <Accordion title="Use domain-specific error classes">
+    Define errors close to the domain entities they relate to:
+    
+    ```csharp
+    public static class BookingErrors { }
+    public static class UserErrors { }
+    public static class ApartmentErrors { }
+    ```
+  </Accordion>
+
+  <Accordion title="Leverage implicit conversion">
+    Result&lt;T&gt; supports implicit conversion from T:
+    
+    ```csharp
+    public Result<Guid> GetBookingId()
+    {
+        return Guid.NewGuid(); // Automatically wraps in Result.Success
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Chain Results in application layer">
+    Early return on failures for clean error propagation:
+    
+    ```csharp
+    var userResult = await GetUser(userId);
+    if (userResult.IsFailure)
+        return Result.Failure<BookingResponse>(userResult.Error);
+    
+    var apartmentResult = await GetApartment(apartmentId);
+    if (apartmentResult.IsFailure)
+        return Result.Failure<BookingResponse>(apartmentResult.Error);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Integration with CQRS
+
+Bookify's CQRS commands and queries use Result as their return type:
+
+```csharp src/Bookify.Application/Abstractions/Messaging/ICommand.cs
+public interface ICommand : IRequest<Result>, IBaseCommand { }
+
+public interface ICommand<TResponse> : IRequest<Result<TResponse>>, IBaseCommand { }
+```
+
+This ensures all operations have explicit, type-safe error handling built into the architecture.
+
+<Card title="Next Steps" icon="arrow-right" href="/concepts/domain-events">
+  Learn how domain events enable communication between aggregates
+</Card>

@@ -1,0 +1,553 @@
+---
+title: 'Docker Deployment'
+description: 'Deploy Bookify with Docker and Docker Compose'
+---
+
+Bookify is designed to run in Docker containers with all dependencies orchestrated via Docker Compose. This guide covers the complete deployment setup, configuration, and production considerations.
+
+## Overview
+
+The Docker setup includes:
+- **bookify.api**: ASP.NET Core API application
+- **bookify-db**: PostgreSQL database
+- **bookify-redis**: Redis cache
+- **bookify-idp**: Keycloak identity provider
+- **bookify-seq**: Seq logging server (optional)
+
+## Docker Compose Configuration
+
+### Base Configuration
+
+The `docker-compose.yml` defines the core services:
+
+```yaml
+services:
+  bookify.api:
+    image: ${DOCKER_REGISTRY-}bookifyapi
+    build:
+      context: .
+      dockerfile: src/Bookify.Api/Dockerfile
+
+  bookify-db:
+    image: postgres:latest
+
+volumes:
+  postgres_bookifydb:
+```
+
+### Override Configuration
+
+The `docker-compose.override.yml` adds development-specific settings:
+
+```yaml
+services:
+  bookify.api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:443;http://+:80
+      - ConnectionStrings__Database=Server=bookify-db;Port=5432;Database=BookifyDb;User Id=postgres;Password=postgres;Include Error Detail=true
+    ports:
+      - "80"
+      - "5001:443"
+    depends_on:
+      - bookify-db
+
+  bookify-db:
+    container_name: Bookify.Db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=BookifyDb
+    restart: always
+    ports:
+      - "4001:5432"
+    volumes:
+      - postgres_bookifydb:/var/lib/postgresql/data/
+
+  bookify-idp:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: Bookify.Identity
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    volumes:
+      - ./.containers/identity:/opt/keycloak/data
+      - ./.files/bookify-realm-export.json:/opt/keycloak/data/import/realm.json
+    ports:
+      - 18080:8080
+
+  bookify-seq:
+    image: datalust/seq:latest
+    container_name: Bookify.Seq
+    environment:
+      - ACCEPT_EULA=Y
+    ports:
+      - 5341:5341
+      - 8081:80
+
+  bookify-redis:
+    image: redis:latest
+    container_name: Bookify.Redis
+    restart: always
+    ports:
+      - 6379:6379
+```
+
+## Dockerfile
+
+The multi-stage Dockerfile (src/Bookify.Api/Dockerfile:1) optimizes the build process:
+
+```dockerfile
+# Base runtime image
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
+USER $APP_UID
+WORKDIR /app
+EXPOSE 8080
+EXPOSE 8081
+
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+ARG BUILD_CONFIGURATION=Release
+WORKDIR /src
+COPY ["src/Bookify.Api/Bookify.Api.csproj", "src/Bookify.Api/"]
+COPY ["src/Bookify.Application/Bookify.Application.csproj", "src/Bookify.Application/"]
+COPY ["src/Bookify.Domain/Bookify.Domain.csproj", "src/Bookify.Domain/"]
+COPY ["src/Bookify.Infrastructure/Bookify.Infrastructure.csproj", "src/Bookify.Infrastructure/"]
+RUN dotnet restore "./src/Bookify.Api/Bookify.Api.csproj"
+COPY . .
+WORKDIR "/src/src/Bookify.Api"
+RUN dotnet build "./Bookify.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build
+
+# Publish stage
+FROM build AS publish
+ARG BUILD_CONFIGURATION=Release
+RUN dotnet publish "./Bookify.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+
+# Final stage
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Bookify.Api.dll"]
+```
+
+**Build stages:**
+1. **base**: Runtime environment with .NET 9.0 ASP.NET
+2. **build**: Restore and build the application
+3. **publish**: Create production-ready binaries
+4. **final**: Minimal runtime image with published output
+
+## Deployment Steps
+
+<Steps>
+
+### Clone the repository
+
+```bash
+git clone https://github.com/yourusername/bookify.git
+cd bookify
+```
+
+### Build and start all services
+
+```bash
+docker-compose up -d --build
+```
+
+This command:
+- Builds the `bookify.api` image from the Dockerfile
+- Pulls required images (PostgreSQL, Redis, Keycloak, Seq)
+- Creates and starts all containers
+- Runs containers in detached mode (`-d`)
+
+### Verify services are running
+
+```bash
+docker-compose ps
+```
+
+Expected output:
+```
+NAME                IMAGE                                   STATUS              PORTS
+Bookify.Db          postgres:latest                         Up 30 seconds       0.0.0.0:4001->5432/tcp
+Bookify.Identity    quay.io/keycloak/keycloak:latest       Up 30 seconds       0.0.0.0:18080->8080/tcp
+Bookify.Redis       redis:latest                            Up 30 seconds       0.0.0.0:6379->6379/tcp
+Bookify.Seq         datalust/seq:latest                     Up 30 seconds       0.0.0.0:5341->5341/tcp, 0.0.0.0:8081->80/tcp
+bookify-api-1       bookifyapi                              Up 30 seconds       0.0.0.0:5001->443/tcp, 80/tcp
+```
+
+### Check application health
+
+```bash
+curl http://localhost:5001/health
+```
+
+Should return:
+```json
+{
+  "status": "Healthy",
+  "entries": {
+    "npgsql": { "status": "Healthy" },
+    "redis": { "status": "Healthy" },
+    "keycloak": { "status": "Healthy" }
+  }
+}
+```
+
+### Access the API
+
+The API is now available at:
+- HTTP: `http://localhost:80`
+- HTTPS: `https://localhost:5001`
+- Swagger: `https://localhost:5001/swagger` (development only)
+
+</Steps>
+
+## Environment Variables
+
+### API Configuration
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `ASPNETCORE_ENVIRONMENT` | Runtime environment | `Development` |
+| `ASPNETCORE_URLS` | Listening URLs | `https://+:443;http://+:80` |
+| `ConnectionStrings__Database` | PostgreSQL connection | See compose file |
+| `ConnectionStrings__Cache` | Redis connection | `bookify-redis:6379` |
+
+### Database Configuration
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `POSTGRES_USER` | Database user | `postgres` |
+| `POSTGRES_PASSWORD` | Database password | `postgres` |
+| `POSTGRES_DB` | Database name | `BookifyDb` |
+
+### Keycloak Configuration
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `KEYCLOAK_ADMIN` | Admin username | `admin` |
+| `KEYCLOAK_ADMIN_PASSWORD` | Admin password | `admin` |
+
+<Warning>
+Change default passwords before deploying to production!
+</Warning>
+
+## Volume Mounts
+
+### Database Persistence
+
+```yaml
+volumes:
+  - postgres_bookifydb:/var/lib/postgresql/data/
+```
+
+Database data is persisted in a named Docker volume, surviving container restarts and removals.
+
+### Keycloak Data
+
+```yaml
+volumes:
+  - ./.containers/identity:/opt/keycloak/data
+  - ./.files/bookify-realm-export.json:/opt/keycloak/data/import/realm.json
+```
+
+- **Identity data**: Persisted in `.containers/identity/`
+- **Realm configuration**: Imported from `.files/bookify-realm-export.json`
+
+## Service Ports
+
+| Service | Container Port | Host Port | URL |
+|---------|---------------|-----------|------|
+| API (HTTP) | 80 | 80 | http://localhost |
+| API (HTTPS) | 443 | 5001 | https://localhost:5001 |
+| PostgreSQL | 5432 | 4001 | localhost:4001 |
+| Redis | 6379 | 6379 | localhost:6379 |
+| Keycloak | 8080 | 18080 | http://localhost:18080 |
+| Seq (Ingestion) | 5341 | 5341 | http://localhost:5341 |
+| Seq (UI) | 80 | 8081 | http://localhost:8081 |
+
+## Common Commands
+
+### Start services
+
+```bash
+docker-compose up -d
+```
+
+### Stop services
+
+```bash
+docker-compose down
+```
+
+### Stop and remove volumes
+
+```bash
+docker-compose down -v
+```
+
+<Warning>
+This deletes all database data and Keycloak configuration!
+</Warning>
+
+### View logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f bookify.api
+
+# Last 100 lines
+docker-compose logs --tail=100 bookify.api
+```
+
+### Rebuild a service
+
+```bash
+docker-compose up -d --build bookify.api
+```
+
+### Execute commands in containers
+
+```bash
+# Access PostgreSQL
+docker exec -it Bookify.Db psql -U postgres -d BookifyDb
+
+# Access Redis CLI
+docker exec -it Bookify.Redis redis-cli
+
+# Shell access to API container
+docker exec -it bookify-api-1 /bin/bash
+```
+
+### Scale services
+
+```bash
+docker-compose up -d --scale bookify.api=3
+```
+
+## Production Considerations
+
+### Security
+
+<AccordionGroup>
+  <Accordion title="Secrets Management">
+    Don't hardcode secrets in docker-compose files:
+    
+    ```yaml
+    services:
+      bookify.api:
+        environment:
+          - ConnectionStrings__Database=${DATABASE_CONNECTION}
+          - Keycloak__AdminClientSecret=${KEYCLOAK_ADMIN_SECRET}
+    ```
+    
+    Use environment files:
+    ```bash
+    docker-compose --env-file .env.production up -d
+    ```
+    
+    Or Docker secrets:
+    ```yaml
+    services:
+      bookify.api:
+        secrets:
+          - db_password
+    secrets:
+      db_password:
+        external: true
+    ```
+  </Accordion>
+
+  <Accordion title="Network Isolation">
+    Create separate networks for service layers:
+    
+    ```yaml
+    networks:
+      frontend:
+      backend:
+    
+    services:
+      bookify.api:
+        networks:
+          - frontend
+          - backend
+      
+      bookify-db:
+        networks:
+          - backend  # Not exposed to frontend
+    ```
+  </Accordion>
+
+  <Accordion title="HTTPS Configuration">
+    Use proper SSL certificates in production:
+    
+    ```yaml
+    services:
+      bookify.api:
+        environment:
+          - ASPNETCORE_URLS=https://+:443
+          - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/cert.pfx
+          - ASPNETCORE_Kestrel__Certificates__Default__Password=${CERT_PASSWORD}
+        volumes:
+          - ./certs:/https:ro
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Performance
+
+<CardGroup cols={2}>
+  <Card title="Resource Limits" icon="gauge">
+    Set CPU and memory limits:
+    ```yaml
+    services:
+      bookify.api:
+        deploy:
+          resources:
+            limits:
+              cpus: '2'
+              memory: 2G
+            reservations:
+              cpus: '1'
+              memory: 1G
+    ```
+  </Card>
+
+  <Card title="Health Checks" icon="heart-pulse">
+    Configure Docker health checks:
+    ```yaml
+    services:
+      bookify.api:
+        healthcheck:
+          test: ["CMD", "curl", "-f", "http://localhost/health"]
+          interval: 30s
+          timeout: 10s
+          retries: 3
+          start_period: 40s
+    ```
+  </Card>
+
+  <Card title="Restart Policy" icon="rotate">
+    Use appropriate restart policies:
+    ```yaml
+    services:
+      bookify.api:
+        restart: unless-stopped
+      bookify-db:
+        restart: always
+    ```
+  </Card>
+
+  <Card title="Logging Configuration" icon="file-lines">
+    Configure log drivers:
+    ```yaml
+    services:
+      bookify.api:
+        logging:
+          driver: "json-file"
+          options:
+            max-size: "10m"
+            max-file: "3"
+    ```
+  </Card>
+</CardGroup>
+
+### Database Management
+
+**Backup strategy:**
+```bash
+# Backup database
+docker exec Bookify.Db pg_dump -U postgres BookifyDb > backup.sql
+
+# Restore database
+docker exec -i Bookify.Db psql -U postgres BookifyDb < backup.sql
+```
+
+**Migration strategy:**
+- Don't run migrations automatically in production
+- Use a separate migration job or manual process
+- Test migrations in staging first
+
+### Monitoring
+
+**Add monitoring services:**
+```yaml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - 9090:9090
+  
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    depends_on:
+      - prometheus
+```
+
+## Troubleshooting
+
+### Container Won't Start
+
+```bash
+# Check container logs
+docker-compose logs bookify.api
+
+# Inspect container
+docker inspect bookify-api-1
+
+# Check resource usage
+docker stats
+```
+
+### Port Already in Use
+
+```
+ERROR: for bookify.api  Cannot start service: Ports are not available
+```
+
+**Solution:** Change port mapping in docker-compose.override.yml:
+```yaml
+ports:
+  - "5002:443"  # Use different host port
+```
+
+### Database Connection Failed
+
+```
+Npgsql.NpgsqlException: Failed to connect
+```
+
+**Solutions:**
+1. Ensure database container is running: `docker ps | grep bookify-db`
+2. Check service dependencies are correct
+3. Use service name (not localhost) in connection string
+4. Verify network connectivity: `docker-compose exec bookify.api ping bookify-db`
+
+### Image Build Failed
+
+```bash
+# Clear build cache
+docker-compose build --no-cache bookify.api
+
+# Remove old images
+docker image prune -a
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Health Checks" icon="heart-pulse" href="/guides/health-checks">
+    Monitor container health
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/clean-architecture">
+    Understand the application structure
+  </Card>
+</CardGroup>

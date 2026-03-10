@@ -1,0 +1,481 @@
+---
+title: 'Health Checks'
+description: 'Monitor application and dependency health in Bookify'
+---
+
+Bookify includes comprehensive health checks to monitor the availability of the API and its dependencies. This guide explains how health checks are implemented, how to access them, and how to add custom checks.
+
+## Overview
+
+Health checks verify the operational status of:
+- **PostgreSQL Database**: Connection and query capability
+- **Redis Cache**: Connection and storage capability
+- **Keycloak Identity Provider**: HTTP endpoint availability
+
+## Health Check Endpoint
+
+The health check endpoint is configured in src/Bookify.Api/Program.cs:47:
+
+```csharp
+app.MapHealthChecks("health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+```
+
+### Accessing Health Checks
+
+Send a GET request to the `/health` endpoint:
+
+```bash
+curl http://localhost:5001/health
+```
+
+### Response Format
+
+The endpoint returns a JSON response with overall status and individual dependency statuses:
+
+```json
+{
+  "status": "Healthy",
+  "totalDuration": "00:00:00.0156732",
+  "entries": {
+    "npgsql": {
+      "status": "Healthy",
+      "duration": "00:00:00.0123456",
+      "data": {}
+    },
+    "redis": {
+      "status": "Healthy",
+      "duration": "00:00:00.0089012",
+      "data": {}
+    },
+    "keycloak": {
+      "status": "Healthy",
+      "duration": "00:00:00.0045678",
+      "data": {}
+    }
+  }
+}
+```
+
+### Status Codes
+
+| Status | HTTP Code | Description |
+|--------|-----------|-------------|
+| `Healthy` | 200 | All dependencies are operational |
+| `Degraded` | 200 | Some non-critical dependencies are unhealthy |
+| `Unhealthy` | 503 | Critical dependencies are unavailable |
+
+## Health Check Configuration
+
+Health checks are registered in src/Bookify.Infrastructure/DependencyInjection.cs:139:
+
+```csharp
+private static void AddHealthChecks(IServiceCollection services, IConfiguration configuration)
+{
+    services.AddHealthChecks()
+        .AddNpgSql(configuration.GetConnectionString("Database")!)
+        .AddRedis(configuration.GetConnectionString("Cache")!)
+        .AddUrlGroup(new Uri(configuration["Keycloak:BaseUrl"]!), HttpMethod.Get, "keycloak");
+}
+```
+
+### Dependencies
+
+Bookify uses the `AspNetCore.HealthChecks` NuGet packages:
+- `AspNetCore.HealthChecks.NpgSql`: PostgreSQL health checks
+- `AspNetCore.HealthChecks.Redis`: Redis health checks
+- `AspNetCore.HealthChecks.Uris`: HTTP endpoint health checks
+- `AspNetCore.HealthChecks.UI.Client`: JSON response formatter
+
+## Individual Health Checks
+
+### PostgreSQL Health Check
+
+**What it checks:**
+- Database connection can be established
+- Database server is responsive
+- Connection string is valid
+
+**Configuration:**
+```csharp
+.AddNpgSql(configuration.GetConnectionString("Database")!)
+```
+
+**Failure scenarios:**
+- PostgreSQL container is down
+- Invalid connection string
+- Network connectivity issues
+- Database authentication failure
+
+**Example unhealthy response:**
+```json
+{
+  "npgsql": {
+    "status": "Unhealthy",
+    "duration": "00:00:05.0000000",
+    "exception": "Npgsql.NpgsqlException: Failed to connect to [::1]:4001",
+    "data": {}
+  }
+}
+```
+
+### Redis Health Check
+
+**What it checks:**
+- Redis connection can be established
+- Redis server is responsive
+- Cache operations work
+
+**Configuration:**
+```csharp
+.AddRedis(configuration.GetConnectionString("Cache")!)
+```
+
+**Failure scenarios:**
+- Redis container is down
+- Invalid connection string
+- Redis server out of memory
+- Network connectivity issues
+
+**Example unhealthy response:**
+```json
+{
+  "redis": {
+    "status": "Unhealthy",
+    "duration": "00:00:05.0000000",
+    "exception": "StackExchange.Redis.RedisConnectionException: No connection is available",
+    "data": {}
+  }
+}
+```
+
+### Keycloak Health Check
+
+**What it checks:**
+- Keycloak endpoint is reachable
+- HTTP GET request succeeds
+- Identity provider is operational
+
+**Configuration:**
+```csharp
+.AddUrlGroup(new Uri(configuration["Keycloak:BaseUrl"]!), HttpMethod.Get, "keycloak")
+```
+
+**Failure scenarios:**
+- Keycloak container is down
+- Invalid base URL configuration
+- Network connectivity issues
+- Keycloak server error
+
+**Example unhealthy response:**
+```json
+{
+  "keycloak": {
+    "status": "Unhealthy",
+    "duration": "00:00:05.0000000",
+    "exception": "HttpRequestException: Connection refused",
+    "data": {}
+  }
+}
+```
+
+## Adding Custom Health Checks
+
+### Simple Health Check
+
+Create a custom health check by implementing `IHealthCheck`:
+
+```csharp
+public class EmailServiceHealthCheck : IHealthCheck
+{
+    private readonly IEmailService _emailService;
+
+    public EmailServiceHealthCheck(IEmailService emailService)
+    {
+        _emailService = emailService;
+    }
+
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var isHealthy = await _emailService.TestConnectionAsync(cancellationToken);
+            
+            if (isHealthy)
+            {
+                return HealthCheckResult.Healthy("Email service is operational");
+            }
+            
+            return HealthCheckResult.Unhealthy("Email service is not responding");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy(
+                "Email service check failed",
+                exception: ex);
+        }
+    }
+}
+```
+
+### Register Custom Health Check
+
+Add it to the health checks configuration:
+
+```csharp
+services.AddHealthChecks()
+    .AddNpgSql(configuration.GetConnectionString("Database")!)
+    .AddRedis(configuration.GetConnectionString("Cache")!)
+    .AddUrlGroup(new Uri(configuration["Keycloak:BaseUrl"]!), HttpMethod.Get, "keycloak")
+    .AddCheck<EmailServiceHealthCheck>("email", HealthStatus.Degraded);
+```
+
+**Parameters:**
+- **Name**: Identifier in health check response ("email")
+- **FailureStatus**: Status when check fails (Degraded or Unhealthy)
+
+<Note>
+Use `HealthStatus.Degraded` for non-critical dependencies to avoid marking the entire application as unhealthy.
+</Note>
+
+### Health Check with Data
+
+Include additional diagnostic information:
+
+```csharp
+public async Task<HealthCheckResult> CheckHealthAsync(
+    HealthCheckContext context,
+    CancellationToken cancellationToken = default)
+{
+    var connectionTime = await MeasureConnectionTimeAsync(cancellationToken);
+    
+    var data = new Dictionary<string, object>
+    {
+        { "connectionTimeMs", connectionTime.TotalMilliseconds },
+        { "server", _configuration["EmailServer"] },
+        { "lastChecked", DateTime.UtcNow }
+    };
+    
+    if (connectionTime > TimeSpan.FromSeconds(5))
+    {
+        return HealthCheckResult.Degraded(
+            "Email service is slow",
+            data: data);
+    }
+    
+    return HealthCheckResult.Healthy(
+        "Email service is operational",
+        data: data);
+}
+```
+
+## Health Check Strategies
+
+<AccordionGroup>
+  <Accordion title="Liveness vs. Readiness">
+    **Liveness**: Is the application running?
+    - Used by orchestrators (Kubernetes) to restart unhealthy containers
+    - Should check minimal critical components
+    - Fast execution (less than 1 second)
+    
+    **Readiness**: Is the application ready to serve traffic?
+    - Used by load balancers to route traffic
+    - Can check all dependencies
+    - May take longer to execute
+    
+    ```csharp
+    // Liveness endpoint
+    app.MapHealthChecks("/health/live", new HealthCheckOptions
+    {
+        Predicate = _ => false // No checks, just returns 200 if app is running
+    });
+    
+    // Readiness endpoint
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("ready"),
+        ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Tagging Health Checks">
+    Organize health checks with tags:
+    
+    ```csharp
+    services.AddHealthChecks()
+        .AddNpgSql(connectionString, tags: new[] { "ready", "db" })
+        .AddRedis(cacheConnectionString, tags: new[] { "ready", "cache" })
+        .AddCheck<StartupHealthCheck>("startup", tags: new[] { "live" });
+    
+    // Database health only
+    app.MapHealthChecks("/health/db", new HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("db")
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Timeout Configuration">
+    Prevent health checks from hanging:
+    
+    ```csharp
+    services.AddHealthChecks()
+        .AddNpgSql(
+            connectionString,
+            timeout: TimeSpan.FromSeconds(3),
+            name: "postgresql")
+        .AddRedis(
+            cacheConnectionString,
+            timeout: TimeSpan.FromSeconds(2),
+            name: "redis");
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Monitoring Integration
+
+### Kubernetes Probes
+
+Configure Kubernetes liveness and readiness probes:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bookify-api
+spec:
+  containers:
+  - name: api
+    image: bookifyapi:latest
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+```
+
+### Prometheus Metrics
+
+Expose health check results as Prometheus metrics:
+
+```csharp
+services.AddHealthChecks()
+    .AddNpgSql(connectionString)
+    .ForwardToPrometheus();
+```
+
+### Application Insights
+
+Log health check results to Application Insights:
+
+```csharp
+services.AddHealthChecks()
+    .AddApplicationInsightsPublisher();
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep Checks Fast" icon="gauge-high">
+    - Aim for less than 100ms execution time
+    - Use timeouts to prevent hanging
+    - Cache results for frequently checked dependencies
+    - Run expensive checks less frequently
+  </Card>
+
+  <Card title="Check What Matters" icon="bullseye">
+    - Focus on critical dependencies
+    - Don't check every internal component
+    - Prioritize user-facing functionality
+    - Use degraded status for nice-to-have features
+  </Card>
+
+  <Card title="Provide Context" icon="circle-info">
+    - Include error messages
+    - Add diagnostic data
+    - Log health check failures
+    - Make troubleshooting easier
+  </Card>
+
+  <Card title="Test Health Checks" icon="flask">
+    - Verify checks fail when dependencies are down
+    - Test timeout behavior
+    - Validate response format
+    - Ensure checks don't throw unhandled exceptions
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Health Check Always Returns Unhealthy
+
+**Causes:**
+- Configuration values are incorrect
+- Dependency services are not running
+- Network connectivity issues
+- Health check timeout too short
+
+**Solutions:**
+1. Check service status: `docker-compose ps`
+2. Verify configuration in appsettings
+3. Test connections manually
+4. Review health check logs
+5. Increase timeout values
+
+### Health Check Endpoint Not Found
+
+```
+404 Not Found
+```
+
+**Causes:**
+- Endpoint not mapped in Program.cs
+- Route middleware order incorrect
+
+**Solutions:**
+```csharp
+// Ensure this is called before app.Run()
+app.MapHealthChecks("health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+```
+
+### Slow Health Check Response
+
+**Causes:**
+- Too many checks running sequentially
+- No timeouts configured
+- Network latency to dependencies
+
+**Solutions:**
+- Add timeouts to individual checks
+- Run checks in parallel (default behavior)
+- Cache health status for a few seconds
+- Move expensive checks to background tasks
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Deployment" icon="docker" href="/guides/docker-deployment">
+    Deploy with health check monitoring
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/clean-architecture">
+    Learn about system architecture
+  </Card>
+</CardGroup>

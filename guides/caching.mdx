@@ -1,0 +1,420 @@
+---
+title: 'Caching'
+description: 'Implement distributed caching with Redis in Bookify'
+---
+
+Bookify uses Redis for distributed caching to improve application performance and reduce database load. This guide explains how caching is implemented and how to use it effectively.
+
+## Overview
+
+The caching system consists of:
+- **Redis**: In-memory data store for distributed caching
+- **ICacheService**: Abstraction for cache operations
+- **QueryCachingBehavior**: MediatR pipeline behavior for automatic query caching
+- **ICachedQuery**: Interface to mark queries as cacheable
+
+## Redis Setup
+
+### Configuration
+
+Redis connection string is configured in `appsettings.Development.json`:
+
+```json
+"ConnectionStrings": {
+  "Cache": "bookify-redis:6379"
+}
+```
+
+### Docker Compose Configuration
+
+Redis runs as a containerized service:
+
+```yaml
+services:
+  bookify-redis:
+    image: redis:latest
+    container_name: Bookify.Redis
+    restart: always
+    ports:
+      - 6379:6379
+```
+
+### Dependency Injection
+
+Caching is configured in src/Bookify.Infrastructure/DependencyInjection.cs:129:
+
+```csharp
+private static void AddCaching(IServiceCollection services, IConfiguration configuration)
+{
+    var connectionString = configuration.GetConnectionString("Cache") ??
+        throw new ArgumentNullException(nameof(configuration));
+
+    services.AddStackExchangeRedisCache(options => options.Configuration = connectionString);
+
+    services.AddSingleton<ICacheService, CacheService>();
+}
+```
+
+## Cache Service
+
+### ICacheService Interface
+
+The cache abstraction (src/Bookify.Application/Abstractions/Caching/ICacheService.cs:4) provides three core operations:
+
+```csharp
+public interface ICacheService
+{
+    Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default);
+
+    Task SetAsync<T>(
+        string key, 
+        T value, 
+        TimeSpan? expirationTime = null,
+        CancellationToken cancellationToken = default);
+
+    Task RemoveAsync(string key, CancellationToken cancellationToken = default);
+}
+```
+
+### Implementation
+
+The `CacheService` (src/Bookify.Infrastructure/Caching/CacheService.cs:8) wraps Redis operations:
+
+```csharp
+internal sealed class CacheService(IDistributedCache cache) : ICacheService
+{
+    public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+    {
+        var bytes = await _cache.GetAsync(key, cancellationToken);
+        return bytes is null ? default : Deserialize<T>(bytes);
+    }
+
+    public Task SetAsync<T>(
+        string key,
+        T value,
+        TimeSpan? expirationTime = null,
+        CancellationToken cancellationToken = default)
+    {
+        var bytes = Serialize(value);
+        return _cache.SetAsync(key, bytes, CacheOptions.Create(expirationTime), cancellationToken);
+    }
+
+    public Task RemoveAsync(string key, CancellationToken cancellationToken = default)
+    {
+        return _cache.RemoveAsync(key, cancellationToken);
+    }
+
+    private static T Deserialize<T>(byte[] bytes)
+    {
+        return JsonSerializer.Deserialize<T>(bytes)!;
+    }
+
+    private static byte[] Serialize<T>(T value)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer);
+        JsonSerializer.Serialize(writer, value);
+        return buffer.WrittenSpan.ToArray();
+    }
+}
+```
+
+## Cache Options
+
+Cache expiration is configured in src/Bookify.Infrastructure/Caching/CacheOptions.cs:7:
+
+```csharp
+public static class CacheOptions
+{ 
+    public static DistributedCacheEntryOptions DefaultCacheOptions => new()
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1)
+    };
+
+    public static DistributedCacheEntryOptions Create(TimeSpan? expiration) =>
+        expiration is null
+            ? DefaultCacheOptions
+            : new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = expiration
+            };
+}
+```
+
+**Default expiration**: 1 minute
+
+## Automatic Query Caching
+
+### QueryCachingBehavior
+
+Bookify uses a MediatR pipeline behavior (src/Bookify.Application/Abstractions/Behaviors/QueryCachingBehavior.cs:8) to automatically cache query results:
+
+```csharp
+internal sealed class QueryCachingBehavior<TRequest, TResponse>(
+    ICacheService cacheService,
+    ILogger<QueryCachingBehavior<TRequest, TResponse>> logger)
+    : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : ICachedQuery
+    where TResponse : Result
+{
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        var cachedResult = await cacheService.GetAsync<TResponse>(
+            request.CacheKey,
+            cancellationToken);
+
+        var name = typeof(TRequest).Name;
+        if (cachedResult is not null)
+        {
+            logger.LogInformation("Cache hit for {Query}", name);
+            return cachedResult;
+        }
+
+        logger.LogInformation("Cache miss for {Query}", name);
+
+        var result = await next();
+
+        if (result.IsSuccess)
+        {
+            await cacheService.SetAsync(request.CacheKey, result, request.Expiration, cancellationToken);
+        }
+        return result;
+    }
+}
+```
+
+### How It Works
+
+<Steps>
+
+### Check cache
+
+The behavior first attempts to retrieve the result from Redis using the cache key.
+
+### Return cached result
+
+If found (cache hit), the cached result is returned immediately, skipping database access.
+
+### Execute query
+
+On cache miss, the query handler executes normally, fetching data from the database.
+
+### Store result
+
+If the query succeeds, the result is stored in Redis with the specified expiration time.
+
+</Steps>
+
+## Creating Cached Queries
+
+### ICachedQuery Interface
+
+To enable caching for a query, implement the `ICachedQuery` interface (src/Bookify.Application/Abstractions/Caching/ICachedQuery.cs:5):
+
+```csharp
+public interface ICachedQuery
+{
+    string CacheKey { get; }
+    TimeSpan? Expiration { get; }
+}
+
+public interface ICachedQuery<TResponse> : IQuery<TResponse>, ICachedQuery;
+```
+
+### Example: Cached Query
+
+Here's how to create a cached query:
+
+```csharp
+public sealed record SearchApartmentsQuery(
+    DateOnly StartDate,
+    DateOnly EndDate) : ICachedQuery<IReadOnlyList<ApartmentResponse>>
+{
+    public string CacheKey => $"apartments-{StartDate:yyyy-MM-dd}-{EndDate:yyyy-MM-dd}";
+    
+    public TimeSpan? Expiration => TimeSpan.FromMinutes(5);
+}
+```
+
+**Key Points:**
+- **CacheKey**: Must be unique for each query variation. Include query parameters.
+- **Expiration**: Optional. If `null`, defaults to 1 minute.
+
+## Manual Caching
+
+For scenarios where automatic caching doesn't fit, use `ICacheService` directly:
+
+```csharp
+public class ApartmentService
+{
+    private readonly ICacheService _cacheService;
+
+    public ApartmentService(ICacheService cacheService)
+    {
+        _cacheService = cacheService;
+    }
+
+    public async Task<Apartment?> GetApartmentAsync(Guid id)
+    {
+        var cacheKey = $"apartment-{id}";
+        
+        // Try to get from cache
+        var apartment = await _cacheService.GetAsync<Apartment>(cacheKey);
+        
+        if (apartment is not null)
+        {
+            return apartment;
+        }
+        
+        // Fetch from database
+        apartment = await _database.GetApartmentAsync(id);
+        
+        // Store in cache for 10 minutes
+        if (apartment is not null)
+        {
+            await _cacheService.SetAsync(
+                cacheKey, 
+                apartment, 
+                TimeSpan.FromMinutes(10));
+        }
+        
+        return apartment;
+    }
+}
+```
+
+## Cache Invalidation
+
+When data changes, invalidate the cache to ensure consistency:
+
+```csharp
+public async Task UpdateApartmentAsync(Guid id, ApartmentData data)
+{
+    // Update database
+    await _database.UpdateApartmentAsync(id, data);
+    
+    // Invalidate cache
+    var cacheKey = $"apartment-{id}";
+    await _cacheService.RemoveAsync(cacheKey);
+}
+```
+
+### Invalidation Strategies
+
+<AccordionGroup>
+  <Accordion title="Explicit Invalidation">
+    Manually remove cache entries when data changes. Most precise but requires careful tracking.
+    
+    ```csharp
+    await _cacheService.RemoveAsync(cacheKey);
+    ```
+  </Accordion>
+
+  <Accordion title="Time-Based Expiration">
+    Let cache entries expire automatically. Simpler but may serve stale data.
+    
+    ```csharp
+    await _cacheService.SetAsync(key, value, TimeSpan.FromMinutes(5));
+    ```
+  </Accordion>
+
+  <Accordion title="Pattern-Based Invalidation">
+    For complex scenarios, use cache key patterns with wildcards (requires additional Redis commands).
+    
+    ```csharp
+    // Invalidate all apartment caches
+    var keys = await redis.KeysAsync("apartment-*");
+    foreach (var key in keys)
+    {
+        await _cacheService.RemoveAsync(key);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Cache Key Design" icon="key">
+    - Use descriptive, hierarchical keys: `entity-id-operation`
+    - Include all query parameters that affect results
+    - Keep keys short but meaningful
+    - Avoid special characters
+  </Card>
+
+  <Card title="Expiration Strategy" icon="clock">
+    - Short TTL for frequently changing data (1-5 minutes)
+    - Longer TTL for static data (hours/days)
+    - Consider business requirements
+    - Balance freshness vs. performance
+  </Card>
+
+  <Card title="What to Cache" icon="database">
+    - Query results that are expensive to compute
+    - Data that doesn't change frequently
+    - Aggregations and statistics
+    - API responses from external services
+  </Card>
+
+  <Card title="What NOT to Cache" icon="ban">
+    - User-specific sensitive data
+    - Data that changes frequently
+    - Large objects (>1MB)
+    - Transaction results
+  </Card>
+</CardGroup>
+
+## Monitoring
+
+Monitor cache performance through:
+
+1. **Application Logs**: Cache hits and misses are logged by `QueryCachingBehavior`
+   ```
+   Cache hit for SearchApartmentsQuery
+   Cache miss for SearchApartmentsQuery
+   ```
+
+2. **Redis CLI**: Connect to Redis to inspect keys and memory usage
+   ```bash
+   docker exec -it Bookify.Redis redis-cli
+   > KEYS *
+   > INFO memory
+   ```
+
+3. **Health Checks**: Verify Redis connectivity (see [Health Checks](/guides/health-checks))
+
+## Troubleshooting
+
+### Cache Not Working
+
+- Verify Redis is running: `docker ps | grep redis`
+- Check connection string in appsettings
+- Ensure query implements `ICachedQuery`
+- Check logs for exceptions
+
+### Stale Data Issues
+
+- Reduce cache expiration time
+- Implement explicit cache invalidation
+- Review cache key uniqueness
+
+### Memory Issues
+
+- Monitor Redis memory usage
+- Reduce expiration times
+- Implement cache eviction policies
+- Consider caching smaller objects
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Setup" icon="database" href="/guides/database-setup">
+    Configure PostgreSQL and EF Core
+  </Card>
+  <Card title="Health Checks" icon="heart-pulse" href="/guides/health-checks">
+    Monitor Redis availability
+  </Card>
+</CardGroup>

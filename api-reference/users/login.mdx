@@ -1,0 +1,162 @@
+---
+title: Login User
+description: Authenticate a user and receive an access token
+---
+
+<Note>
+  This endpoint does not require authentication and can be accessed anonymously.
+</Note>
+
+## Endpoint
+
+```
+POST /api/users/login
+```
+
+Authenticate a user with their email and password to receive a JWT access token. Use this token to access protected endpoints.
+
+## Request Body
+
+<ParamField body="email" type="string" required>
+  User's registered email address.
+  
+  Example: `john.doe@example.com`
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password.
+  
+  Example: `SecurePass123!`
+</ParamField>
+
+## Response
+
+<ResponseField name="accessToken" type="string">
+  JWT access token to be used for authenticating subsequent API requests. Include this token in the `Authorization` header as `Bearer <token>`.
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST "https://api.bookify.com/api/users/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john.doe@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+## Example Response
+
+**Status Code:** `200 OK`
+
+```json
+{
+  "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJxRXBkOXFfVjR3TjhMUjJ2LVEtS0tfNWdSMmg4UjhnY2tKZF9xR3l6TG84In0.eyJleHAiOjE3MTA1MjMyMDAsImlhdCI6MTcxMDUxOTYwMCwianRpIjoiMzg1ZWYxMzItZTdjOS00ZTQwLWE5ZWUtMzM2MjI0YzVkZTg3IiwiaXNzIjoiaHR0cDovL2Jvb2tpZnktaWRwOjgwODAvcmVhbG1zL0Jvb2tpZnkiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiN2I5YzNkMWUtNGYyYS01YzZkLThlOWYtMGExYjJjM2Q0ZTVmIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiYm9va2lmeS1hdXRoLWNsaWVudCIsInNlc3Npb25fc3RhdGUiOiJkNGE4ZGNiNC1hYjEyLTQ3MzYtOWJlMC0zYzY4OGRmNDcyZDkiLCJhY3IiOiIxIiwiYWxsb3dlZC1vcmlnaW5zIjpbIi8qIl0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJkZWZhdWx0LXJvbGVzLWJvb2tpZnkiLCJvZmZsaW5lX2FjY2VzcyIsInVtYV9hdXRob3JpemF0aW9uIl19LCJyZXNvdXJjZV9hY2Nlc3MiOnsiYWNjb3VudCI6eyJyb2xlcyI6WyJtYW5hZ2UtYWNjb3VudCIsIm1hbmFnZS1hY2NvdW50LWxpbmtzIiwidmlldy1wcm9maWxlIl19fSwic2NvcGUiOiJlbWFpbCBwcm9maWxlIiwic2lkIjoiZDRhOGRjYjQtYWIxMi00NzM2LTliZTAtM2M2ODhkZjQ3MmQ5IiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJKb2huIERvZSIsInByZWZlcnJlZF91c2VybmFtZSI6ImpvaG4uZG9lQGV4YW1wbGUuY29tIiwiZ2l2ZW5fbmFtZSI6IkpvaG4iLCJmYW1pbHlfbmFtZSI6IkRvZSIsImVtYWlsIjoiam9obi5kb2VAZXhhbXBsZS5jb20ifQ.signature_here"
+}
+```
+
+## Error Responses
+
+### 401 Unauthorized
+
+Returned when the provided credentials are invalid.
+
+```json
+{
+  "code": "User.InvalidCredentials",
+  "message": "The provided email or password is incorrect"
+}
+```
+
+**Common scenarios:**
+- Email address not found in the system
+- Password does not match the stored hash
+- Account is disabled or locked
+
+### 400 Bad Request
+
+Returned when the request format is invalid.
+
+```json
+{
+  "code": "Validation.Error",
+  "message": "Email and password are required"
+}
+```
+
+### 500 Internal Server Error
+
+Returned when an unexpected server error occurs.
+
+```json
+{
+  "code": "Server.Error",
+  "message": "An unexpected error occurred while processing your request"
+}
+```
+
+## Using the Access Token
+
+Once you receive the access token, include it in the `Authorization` header of subsequent requests:
+
+```bash
+curl -X GET "https://api.bookify.com/api/users/me" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+### Token Format
+
+The access token is a JWT (JSON Web Token) that contains:
+
+- **Header:** Algorithm and token type
+- **Payload:** User claims (user ID, email, roles, expiration)
+- **Signature:** Cryptographic signature for verification
+
+### Token Expiration
+
+Access tokens typically expire after **1 hour**. When a token expires, you'll receive a `401 Unauthorized` response. Simply login again to obtain a new token.
+
+## Security Best Practices
+
+<Warning>
+  Always use HTTPS in production to prevent credentials from being intercepted.
+</Warning>
+
+- **Store tokens securely** - Use secure storage mechanisms (encrypted storage, HTTP-only cookies)
+- **Never expose tokens** - Don't log tokens or include them in URLs
+- **Handle expiration** - Implement automatic re-authentication when tokens expire
+- **Logout properly** - Clear tokens from storage when users logout
+
+## Example: Login and Use Token
+
+```bash
+# 1. Login and capture the token
+TOKEN=$(curl -s -X POST "https://api.bookify.com/api/users/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john.doe@example.com",
+    "password": "SecurePass123!"
+  }' | jq -r '.accessToken')
+
+# 2. Use the token to access protected endpoints
+curl -X GET "https://api.bookify.com/api/users/me" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 3. Create a booking
+curl -X POST "https://api.bookify.com/api/bookings" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "apartmentId": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+    "userId": "7b9c3d1e-4f2a-5c6d-8e9f-0a1b2c3d4e5f",
+    "startDate": "2024-06-15",
+    "endDate": "2024-06-20"
+  }'
+```
+
+## Related Endpoints
+
+- [Register User](/api-reference/users/register) - Create a new account
+- [Get Current User](/api-reference/users/get-current-user) - Retrieve your user profile
+- [Authentication Guide](/api-reference/authentication) - Learn more about authentication

@@ -1,0 +1,560 @@
+---
+title: Clean Architecture
+description: Detailed explanation of Clean Architecture principles and implementation in Bookify
+---
+
+## What is Clean Architecture?
+
+Clean Architecture is a software design philosophy that emphasizes separation of concerns and independence of frameworks, UI, databases, and external agencies. The core principle is that **business logic should be independent of implementation details**.
+
+### The Dependency Rule
+
+The fundamental rule of Clean Architecture is the **Dependency Rule**:
+
+<Note>
+  Source code dependencies must only point inward. Nothing in an inner circle can know anything about something in an outer circle.
+</Note>
+
+In Bookify, this means:
+- **Domain** depends on nothing
+- **Application** depends only on Domain
+- **Infrastructure** depends on Domain and implements Application interfaces
+- **API** depends on Application and Infrastructure (for composition)
+
+## The Four Layers
+
+### 1. Domain Layer (Core)
+
+The Domain layer is the heart of the application. It contains:
+- **Entities** - Objects with identity and lifecycle
+- **Value Objects** - Immutable objects without identity
+- **Domain Events** - Events that represent something that happened
+- **Aggregates** - Clusters of entities treated as a unit
+- **Domain Services** - Business logic that doesn't fit in entities
+- **Repository Interfaces** - Contracts for data access
+
+<Warning>
+  The Domain layer must have ZERO external dependencies. It should only reference base .NET libraries.
+</Warning>
+
+#### Example: Booking Entity
+
+The `Booking` entity contains all business logic related to booking operations:
+
+```csharp
+// src/Bookify.Domain/Bookings/Booking.cs:11
+public sealed class Booking : Entity
+{
+    public Guid ApartmentId { get; private set; }
+    public Guid UserId { get; private set; }
+    public DateRange Duration { get; private set; }
+    public Money PriceForPeriod { get; private set; }
+    public BookingStatus Status { get; private set; }
+    
+    // Factory method encapsulates creation logic
+    public static Booking Reserve(
+        Apartment apartment,
+        Guid userId,
+        DateRange duration,
+        DateTime utcNow,
+        PricingService pricingService)
+    {
+        var pricingDetails = pricingService.CalculatePrice(apartment, duration);
+        
+        var booking = new Booking(
+            Guid.NewGuid(),
+            apartment.Id,
+            userId,
+            duration,
+            pricingDetails.PriceForPeriod,
+            pricingDetails.CleaningFee,
+            pricingDetails.AmenitiesUpCharge,
+            pricingDetails.TotalPrice,
+            BookingStatus.Reserved,
+            utcNow);
+            
+        booking.RaiseDomainEvent(new BookingReservedDomainEvent(booking.Id));
+        
+        return booking;
+    }
+    
+    // Business rule: can only confirm reserved bookings
+    public Result Confirm(DateTime utcNow)
+    {
+        if (Status != BookingStatus.Reserved)
+        {
+            return Result.Failure(BookingErrors.NotReserved);
+        }
+        
+        Status = BookingStatus.Confirmed;
+        ConfirmedOnUtc = utcNow;
+        
+        RaiseDomainEvent(new BookingConfirmedDomainEvent(Id));
+        
+        return Result.Success();
+    }
+}
+```
+
+Key characteristics:
+- **Private setters** - Enforce encapsulation
+- **Factory methods** - Control object creation
+- **Business rules** - Validated in the domain
+- **Domain events** - Communicate state changes
+- **Result objects** - Explicit success/failure
+
+#### Example: Value Objects
+
+Value objects are immutable and defined by their attributes:
+
+```csharp
+// src/Bookify.Domain/Shared/Money.cs:3
+public record Money(decimal Amount, Currency Currency)
+{
+    public static Money operator +(Money first, Money second)
+    {
+        if (first.Currency != second.Currency)
+        {
+            throw new InvalidOperationException("Currencies have to be equal");
+        }
+        
+        return new Money(first.Amount + second.Amount, first.Currency);
+    }
+    
+    public static Money Zero() => new(0, Currency.None);
+    public bool IsZero() => this == Zero(Currency);
+}
+```
+
+```csharp
+// src/Bookify.Domain/Bookings/ValueObjects/DateRange.cs:3
+public record DateRange
+{
+    public DateOnly Start { get; init; }
+    public DateOnly End { get; init; }
+    public int LengthInDays => End.DayNumber - Start.DayNumber;
+    
+    public static DateRange Create(DateOnly start, DateOnly end)
+    {
+        if (start > end)
+        {
+            throw new ApplicationException("End date precedes start date");
+        }
+        
+        return new DateRange { Start = start, End = end };
+    }
+}
+```
+
+### 2. Application Layer (Use Cases)
+
+The Application layer contains:
+- **Commands** - Requests to change state
+- **Queries** - Requests to read data
+- **Command/Query Handlers** - Execute use cases
+- **Validators** - Validate commands/queries
+- **Pipeline Behaviors** - Cross-cutting concerns
+- **Abstractions** - Interfaces for external dependencies
+
+#### Example: Command Handler
+
+```csharp
+// src/Bookify.Application/Bookings/ReserveBooking/ReserveBookingCommandHandler.cs:17
+internal sealed class ReserveBookingCommandHandler(
+    IUserRepository userRepository,
+    IApartmentRepository apartmentRepository,
+    IBookingRepository bookingRepository,
+    IUnitOfWork unitOfWork,
+    PricingService pricingService,
+    IDateTimeProvider dateTimeProvider)
+    : ICommandHandler<ReserveBookingCommand, Guid>
+{
+    public async Task<Result<Guid>> Handle(
+        ReserveBookingCommand request,
+        CancellationToken cancellationToken)
+    {
+        // 1. Retrieve user and apartment
+        var user = await userRepository.GetByIdAsync(request.UserId, cancellationToken);
+        if (user is null)
+        {
+            return Result.Failure<Guid>(UserErrors.NotFound);
+        }
+        
+        var apartment = await apartmentRepository.GetByIdAsync(
+            request.ApartmentId, 
+            cancellationToken);
+        if (apartment is null)
+        {
+            return Result.Failure<Guid>(ApartmentErrors.NotFound);
+        }
+        
+        // 2. Check for overlapping bookings
+        var duration = DateRange.Create(request.StartDate, request.EndDate);
+        if (await bookingRepository.IsOverlappingAsync(apartment, duration, cancellationToken))
+        {
+            return Result.Failure<Guid>(BookingErrors.Overlap);
+        }
+        
+        // 3. Execute domain logic
+        var booking = Booking.Reserve(
+            apartment,
+            user.Id,
+            duration,
+            dateTimeProvider.UtcNow,
+            pricingService);
+        
+        // 4. Persist changes
+        bookingRepository.Add(booking);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        
+        return booking.Id;
+    }
+}
+```
+
+The handler:
+1. Retrieves required entities
+2. Validates business rules
+3. Delegates to domain logic
+4. Persists changes
+5. Returns a result
+
+<Note>
+  Handlers orchestrate but don't contain business logic. Domain entities and services contain the actual business rules.
+</Note>
+
+#### Abstractions
+
+The Application layer defines interfaces for dependencies:
+
+```csharp
+// src/Bookify.Application/Abstractions/Clock/IDateTimeProvider.cs
+public interface IDateTimeProvider
+{
+    DateTime UtcNow { get; }
+}
+
+// src/Bookify.Application/Abstractions/Email/IEmailService.cs
+public interface IEmailService
+{
+    Task SendAsync(string recipient, string subject, string body);
+}
+
+// src/Bookify.Application/Abstractions/Caching/ICacheService.cs
+public interface ICacheService
+{
+    Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default);
+    Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken cancellationToken = default);
+}
+```
+
+These are implemented in the Infrastructure layer.
+
+### 3. Infrastructure Layer (External Concerns)
+
+The Infrastructure layer provides implementations for:
+- **Data Access** - EF Core, Dapper
+- **Repositories** - Implement domain repository interfaces
+- **Authentication** - JWT, Keycloak integration
+- **Authorization** - Permission-based authorization
+- **Caching** - Redis implementation
+- **Email** - Email service implementation
+- **Migrations** - Database schema management
+
+#### Example: Repository Implementation
+
+```csharp
+// src/Bookify.Infrastructure/Repositories/BookingRepository.cs
+internal sealed class BookingRepository : Repository<Booking>, IBookingRepository
+{
+    private readonly ApplicationDbContext _dbContext;
+    
+    public BookingRepository(ApplicationDbContext dbContext) : base(dbContext)
+    {
+        _dbContext = dbContext;
+    }
+    
+    public async Task<bool> IsOverlappingAsync(
+        Apartment apartment,
+        DateRange duration,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Set<Booking>()
+            .Where(b => b.ApartmentId == apartment.Id &&
+                        b.Status == BookingStatus.Reserved &&
+                        b.Duration.Start <= duration.End &&
+                        b.Duration.End >= duration.Start)
+            .AnyAsync(cancellationToken);
+    }
+}
+```
+
+#### Dependency Injection Registration
+
+```csharp
+// src/Bookify.Infrastructure/DependencyInjection.cs:36
+public static IServiceCollection AddInfrastructure(
+    this IServiceCollection services,
+    IConfiguration configuration)
+{
+    // Date/Time provider
+    services.AddTransient<IDateTimeProvider, DateTimeProvider>();
+    
+    // Email service
+    services.AddTransient<IEmailService, EmailService>();
+    
+    // Database
+    services.AddDbContext<ApplicationDbContext>(options =>
+        options.UseNpgsql(connectionString).UseSnakeCaseNamingConvention());
+    
+    // Repositories
+    services.AddScoped<IUserRepository, UserRepository>();
+    services.AddScoped<IApartmentRepository, ApartmentRepository>();
+    services.AddScoped<IBookingRepository, BookingRepository>();
+    
+    // Unit of Work
+    services.AddScoped<IUnitOfWork>(sp => 
+        sp.GetRequiredService<ApplicationDbContext>());
+    
+    // Caching
+    services.AddStackExchangeRedisCache(options => 
+        options.Configuration = configuration.GetConnectionString("Cache"));
+    services.AddSingleton<ICacheService, CacheService>();
+    
+    return services;
+}
+```
+
+### 4. API Layer (Presentation)
+
+The API layer is the entry point and contains:
+- **Controllers** - HTTP endpoints
+- **Request/Response DTOs** - API contracts
+- **Middleware** - Exception handling, logging, etc.
+- **Program.cs** - Application composition
+
+#### Example: Controller
+
+```csharp
+// src/Bookify.Api/Controllers/Bookings/BookingsController.cs:11
+[ApiController]
+[Route("api/bookings")]
+public class BookingsController(ISender sender) : ControllerBase
+{
+    [HttpPost]
+    public async Task<IActionResult> ReserveBooking(
+        ReserveBookingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var command = new ReserveBookingCommand(
+            request.ApartmentId,
+            request.UserId,
+            request.StartDate,
+            request.EndDate);
+        
+        var result = await sender.Send(command, cancellationToken);
+        
+        if (result.IsFailure)
+        {
+            return BadRequest(result.Error);
+        }
+        
+        return CreatedAtAction(
+            nameof(GetBooking),
+            new { id = result.Value },
+            result.Value);
+    }
+}
+```
+
+Controllers are thin - they only:
+1. Map HTTP requests to commands/queries
+2. Send via MediatR
+3. Map results to HTTP responses
+
+## Benefits of Clean Architecture
+
+<CardGroup cols={2}>
+  <Card title="Independent of Frameworks" icon="puzzle-piece">
+    Business logic doesn't depend on EF Core, MediatR, or any framework. You can swap them out.
+  </Card>
+  
+  <Card title="Testable" icon="vial">
+    Business logic can be tested without the UI, database, web server, or any external element.
+  </Card>
+  
+  <Card title="Independent of UI" icon="desktop">
+    The UI can change without affecting business rules. Could add a gRPC interface alongside REST.
+  </Card>
+  
+  <Card title="Independent of Database" icon="database">
+    Business rules aren't bound to PostgreSQL. Could switch to SQL Server or MongoDB.
+  </Card>
+</CardGroup>
+
+## Dependency Inversion in Action
+
+The Application layer defines what it needs:
+
+```csharp
+public interface IBookingRepository
+{
+    Task<Booking?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    void Add(Booking booking);
+    Task<bool> IsOverlappingAsync(Apartment apartment, DateRange duration, CancellationToken cancellationToken);
+}
+```
+
+The Infrastructure layer provides the implementation:
+
+```csharp
+public class BookingRepository : IBookingRepository
+{
+    // EF Core implementation details
+}
+```
+
+The API layer wires them together:
+
+```csharp
+services.AddScoped<IBookingRepository, BookingRepository>();
+```
+
+This is **Dependency Inversion**: high-level modules (Application) don't depend on low-level modules (Infrastructure). Both depend on abstractions (interfaces).
+
+## Testing Strategy
+
+<Accordion title="Unit Tests - Domain Layer">
+  Test business logic in isolation:
+  
+  ```csharp
+  [Fact]
+  public void Confirm_ShouldFail_WhenBookingNotReserved()
+  {
+      // Arrange
+      var booking = BookingData.Create();
+      booking.Confirm(DateTime.UtcNow); // First confirmation
+      
+      // Act
+      var result = booking.Confirm(DateTime.UtcNow); // Second confirmation
+      
+      // Assert
+      result.IsFailure.Should().BeTrue();
+      result.Error.Should().Be(BookingErrors.NotReserved);
+  }
+  ```
+</Accordion>
+
+<Accordion title="Integration Tests - Application Layer">
+  Test handlers with mocked repositories:
+  
+  ```csharp
+  [Fact]
+  public async Task Handle_ShouldReserveBooking_WhenValidRequest()
+  {
+      // Arrange
+      var userRepositoryMock = new Mock<IUserRepository>();
+      var apartmentRepositoryMock = new Mock<IApartmentRepository>();
+      var bookingRepositoryMock = new Mock<IBookingRepository>();
+      
+      var handler = new ReserveBookingCommandHandler(
+          userRepositoryMock.Object,
+          apartmentRepositoryMock.Object,
+          bookingRepositoryMock.Object,
+          /* ... */);
+      
+      // Act & Assert
+  }
+  ```
+</Accordion>
+
+<Accordion title="Integration Tests - Infrastructure Layer">
+  Test with real database:
+  
+  ```csharp
+  public class BookingRepositoryTests : IClassFixture<DatabaseFixture>
+  {
+      [Fact]
+      public async Task IsOverlapping_ShouldReturnTrue_WhenBookingsOverlap()
+      {
+          // Test with real EF Core and test database
+      }
+  }
+  ```
+</Accordion>
+
+## Common Patterns
+
+### Result Pattern
+
+Instead of throwing exceptions for business rule violations, Bookify uses the Result pattern:
+
+```csharp
+// src/Bookify.Domain/Abstractions/Result.cs:5
+public class Result
+{
+    public bool IsSuccess { get; }
+    public bool IsFailure => !IsSuccess;
+    public Error Error { get; }
+    
+    public static Result Success() => new(true, Error.None);
+    public static Result Failure(Error error) => new(false, error);
+}
+
+public sealed class Result<TValue> : Result
+{
+    public TValue Value => IsSuccess
+        ? _value!
+        : throw new InvalidOperationException("Cannot access value of a failure result.");
+}
+```
+
+Usage:
+
+```csharp
+var result = booking.Confirm(DateTime.UtcNow);
+
+if (result.IsFailure)
+{
+    return BadRequest(result.Error);
+}
+
+return Ok();
+```
+
+### Unit of Work Pattern
+
+The `IUnitOfWork` interface represents a transaction:
+
+```csharp
+public interface IUnitOfWork
+{
+    Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+}
+```
+
+Implemented by `ApplicationDbContext`:
+
+```csharp
+// src/Bookify.Infrastructure/ApplicationDbContext.cs:8
+public sealed class ApplicationDbContext : DbContext, IUnitOfWork
+{
+    public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        await PublishDomainEventsAsync();
+        return await base.SaveChangesAsync(cancellationToken);
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CQRS Pattern" icon="split" href="/architecture/cqrs-pattern">
+    Learn how commands and queries are separated
+  </Card>
+  
+  <Card title="Domain-Driven Design" icon="puzzle-piece" href="/architecture/domain-driven-design">
+    Deep dive into aggregates, entities, and value objects
+  </Card>
+</CardGroup>

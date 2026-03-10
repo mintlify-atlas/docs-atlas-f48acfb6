@@ -1,0 +1,112 @@
+---
+title: API Overview
+description: Introduction to the Bookify REST API
+---
+
+The Bookify API is a RESTful web service that enables you to manage apartment bookings, user accounts, and reviews. This API provides programmatic access to all core Bookify functionality.
+
+## Base URL
+
+All API requests should be made to:
+
+```
+https://api.bookify.com
+```
+
+For development environments:
+
+```
+http://localhost:5000
+```
+
+## Available Resources
+
+The Bookify API provides access to the following resources:
+
+### Apartments
+Search and browse available apartments for booking within specified date ranges.
+
+- `GET /api/apartments` - Search available apartments
+
+### Bookings
+Create and manage apartment reservations.
+
+- `GET /api/bookings/{id}` - Retrieve a specific booking
+- `POST /api/bookings` - Create a new booking reservation
+
+### Users
+Manage user accounts and authentication.
+
+- `POST /api/users/register` - Register a new user account
+- `POST /api/users/login` - Authenticate and receive access token
+- `GET /api/users/me` - Get current authenticated user details
+
+### Reviews
+Submit reviews for completed bookings.
+
+- `POST /api/reviews` - Add a review for a booking
+
+## Authentication
+
+Most endpoints require authentication using JWT (JSON Web Tokens). See the [Authentication](/api-reference/authentication) page for details on obtaining and using access tokens.
+
+Endpoints that allow anonymous access:
+- `POST /api/users/register`
+- `POST /api/users/login`
+
+## Response Format
+
+All API responses are returned in JSON format. Successful responses include the requested data, while error responses include error details.
+
+### Success Response
+
+```json
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "name": "Modern Downtown Apartment",
+  "price": 150.00
+}
+```
+
+### Error Response
+
+```json
+{
+  "code": "Booking.NotFound",
+  "message": "The booking with the specified identifier was not found"
+}
+```
+
+## Common HTTP Status Codes
+
+The Bookify API uses standard HTTP status codes:
+
+| Status Code | Description |
+|------------|-------------|
+| `200 OK` | Request succeeded |
+| `201 Created` | Resource created successfully |
+| `400 Bad Request` | Invalid request parameters or validation error |
+| `401 Unauthorized` | Missing or invalid authentication token |
+| `404 Not Found` | Requested resource not found |
+| `500 Internal Server Error` | Server error occurred |
+
+## Rate Limiting
+
+Currently, the Bookify API does not enforce rate limiting. However, we recommend implementing exponential backoff in your client applications to handle potential future rate limits gracefully.
+
+## API Versioning
+
+The current version of the Bookify API does not use explicit versioning in the URL path. Breaking changes will be communicated in advance, and we maintain backwards compatibility whenever possible.
+
+## Date Formats
+
+All dates are represented in ISO 8601 format:
+
+- **Date only**: `YYYY-MM-DD` (e.g., `2024-03-15`)
+- **DateTime**: `YYYY-MM-DDTHH:mm:ss.sssZ` (e.g., `2024-03-15T14:30:00.000Z`)
+
+## Next Steps
+
+- Learn how to [authenticate](/api-reference/authentication) with the API
+- Explore [apartment search](/api-reference/apartments/search) functionality
+- Create your first [booking](/api-reference/bookings/reserve-booking)

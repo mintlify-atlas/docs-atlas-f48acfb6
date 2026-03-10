@@ -1,0 +1,117 @@
+---
+title: Introduction
+description: Welcome to Bookify - A modern apartment booking management API built with Clean Architecture
+---
+
+## What is Bookify?
+
+Bookify is a production-ready apartment booking management API built with **Clean Architecture**, **CQRS**, and **Domain-Driven Design (DDD)** principles. It provides a comprehensive solution for managing apartment listings, bookings, user reviews, and authentication in a scalable and maintainable way.
+
+## Why Bookify?
+
+Bookify solves the challenge of building a modern, enterprise-grade booking system by providing:
+
+- **Clean Architecture**: Clear separation of concerns with distinct layers (Domain, Application, Infrastructure, API)
+- **CQRS Pattern**: Separate models for reading and writing data using MediatR
+- **Domain-Driven Design**: Rich domain models with encapsulated business logic
+- **Type Safety**: Built with C# and .NET 9 for compile-time safety and performance
+- **Production-Ready**: Includes authentication, caching, logging, and health checks out of the box
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Apartment Management" icon="building">
+    Search available apartments by date range with intelligent availability checking
+  </Card>
+  <Card title="Booking System" icon="calendar-check">
+    Reserve apartments with automatic pricing calculation and conflict detection
+  </Card>
+  <Card title="User Authentication" icon="shield">
+    JWT-based authentication powered by Keycloak with role-based access control
+  </Card>
+  <Card title="Review System" icon="star">
+    Allow users to review apartments after their stay with rating aggregation
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+Bookify follows Clean Architecture principles with four distinct layers:
+
+```
+┌─────────────────────────────────────┐
+│         Bookify.Api                 │  ← Controllers, Middleware, Configuration
+└─────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────┐
+│      Bookify.Application            │  ← CQRS Handlers, Validators, DTOs
+└─────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────┐
+│       Bookify.Domain                │  ← Entities, Value Objects, Domain Events
+└─────────────────────────────────────┘
+              ↑
+┌─────────────────────────────────────┐
+│    Bookify.Infrastructure           │  ← EF Core, Repositories, External Services
+└─────────────────────────────────────┘
+```
+
+### Technology Stack
+
+- **Framework**: .NET 9 / ASP.NET Core Web API
+- **Database**: PostgreSQL with Entity Framework Core 9
+- **Caching**: Redis for distributed caching
+- **Authentication**: Keycloak for JWT token management
+- **CQRS**: MediatR for command/query separation
+- **Validation**: FluentValidation for request validation
+- **Logging**: Serilog with Seq integration
+- **Containerization**: Docker and Docker Compose
+- **API Documentation**: Swagger/OpenAPI
+
+## Core Domain Concepts
+
+### Apartments
+Manage apartment listings with detailed information including name, description, address, pricing, and amenities. Support for availability checking based on existing bookings.
+
+### Bookings
+Handle the complete booking lifecycle from reservation through completion. Includes automatic pricing calculation, date conflict detection, and status management (Reserved, Confirmed, Rejected, Cancelled, Completed).
+
+### Users
+Manage user accounts integrated with Keycloak for authentication and authorization. Support for role-based permissions.
+
+### Reviews
+Allow users to review apartments after their stay. Reviews include ratings and comments, with validation to ensure only completed bookings can be reviewed.
+
+## Design Patterns & Principles
+
+<Note>
+  Bookify implements several key patterns that make it an excellent reference for learning modern .NET architecture:
+</Note>
+
+- **Repository Pattern**: Abstraction over data access in `Bookify.Domain/*/Interfaces`
+- **Unit of Work**: Transaction management via `IUnitOfWork`
+- **Result Pattern**: Type-safe error handling without exceptions
+- **Domain Events**: Decoupled domain logic using events
+- **Pipeline Behaviors**: Cross-cutting concerns (logging, validation, caching) via MediatR behaviors
+- **Value Objects**: Encapsulation of domain concepts like `Address`, `Money`, `DateRange`
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Bookify running in 5 minutes with Docker Compose
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up Bookify for local development without Docker
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Explore the complete API endpoints and schemas
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Deep dive into the Clean Architecture implementation
+  </Card>
+</CardGroup>
+
+## What's Next?
+
+Follow the [Quickstart](/quickstart) guide to get Bookify running locally in minutes, or check out the [Installation](/installation) guide for a detailed local development setup.

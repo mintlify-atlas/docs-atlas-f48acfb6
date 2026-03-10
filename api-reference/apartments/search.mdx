@@ -1,0 +1,162 @@
+---
+title: Search Apartments
+description: Search for available apartments within a date range
+---
+
+<Note>
+  This endpoint does not require authentication and can be accessed anonymously.
+</Note>
+
+## Endpoint
+
+```
+GET /api/apartments
+```
+
+Search for apartments that are available for booking within the specified date range.
+
+## Query Parameters
+
+<ParamField query="startDate" type="string" required>
+  The check-in date in ISO 8601 format (YYYY-MM-DD).
+  
+  Example: `2024-06-15`
+</ParamField>
+
+<ParamField query="endDate" type="string" required>
+  The check-out date in ISO 8601 format (YYYY-MM-DD). Must be after `startDate`.
+  
+  Example: `2024-06-20`
+</ParamField>
+
+## Response
+
+Returns an array of available apartments matching the search criteria.
+
+<ResponseField name="id" type="string (uuid)">
+  Unique identifier for the apartment.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Name or title of the apartment listing.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Detailed description of the apartment and its features.
+</ResponseField>
+
+<ResponseField name="price" type="number">
+  Nightly price for the apartment.
+</ResponseField>
+
+<ResponseField name="currency" type="string">
+  Currency code for the price (e.g., "USD", "EUR").
+</ResponseField>
+
+<ResponseField name="address" type="object">
+  Physical address of the apartment.
+  
+  <ResponseField name="address.country" type="string">
+    Country name.
+  </ResponseField>
+  
+  <ResponseField name="address.state" type="string">
+    State or province.
+  </ResponseField>
+  
+  <ResponseField name="address.zipCode" type="string">
+    Postal or ZIP code.
+  </ResponseField>
+  
+  <ResponseField name="address.city" type="string">
+    City name.
+  </ResponseField>
+  
+  <ResponseField name="address.street" type="string">
+    Street address.
+  </ResponseField>
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X GET "https://api.bookify.com/api/apartments?startDate=2024-06-15&endDate=2024-06-20" \
+  -H "Accept: application/json"
+```
+
+## Example Response
+
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+    "name": "Modern Downtown Loft",
+    "description": "Spacious loft in the heart of downtown with stunning city views. Features modern amenities, high-speed WiFi, and a fully equipped kitchen.",
+    "price": 150.00,
+    "currency": "USD",
+    "address": {
+      "country": "United States",
+      "state": "California",
+      "zipCode": "90012",
+      "city": "Los Angeles",
+      "street": "123 Main Street"
+    }
+  },
+  {
+    "id": "b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e",
+    "name": "Beachfront Paradise",
+    "description": "Beautiful beachfront apartment with ocean views. Perfect for a relaxing getaway with direct beach access.",
+    "price": 225.00,
+    "currency": "USD",
+    "address": {
+      "country": "United States",
+      "state": "California",
+      "zipCode": "90802",
+      "city": "Long Beach",
+      "street": "456 Ocean Boulevard"
+    }
+  }
+]
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+Returned when the query parameters are invalid or missing.
+
+```json
+{
+  "code": "Validation.Error",
+  "message": "Start date and end date are required"
+}
+```
+
+**Common validation errors:**
+- Missing `startDate` or `endDate` parameters
+- Invalid date format (must be YYYY-MM-DD)
+- `endDate` is before or equal to `startDate`
+- Dates are in the past
+
+### 500 Internal Server Error
+
+Returned when an unexpected server error occurs.
+
+```json
+{
+  "code": "Server.Error",
+  "message": "An unexpected error occurred while processing your request"
+}
+```
+
+## Usage Notes
+
+- The search returns only apartments that have no conflicting bookings for the entire date range
+- Dates are inclusive (both start and end dates are included in the booking period)
+- Results are not paginated in the current API version
+- The `price` represents the nightly rate and does not include additional fees
+
+## Related Endpoints
+
+- [Reserve Booking](/api-reference/bookings/reserve-booking) - Create a booking for an apartment
+- [Get Booking](/api-reference/bookings/get-booking) - Retrieve booking details

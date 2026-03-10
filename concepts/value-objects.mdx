@@ -1,0 +1,475 @@
+---
+title: Value Objects
+description: Learn how Bookify uses value objects to model domain concepts with built-in validation and type safety
+---
+
+Value objects are immutable types that represent domain concepts through their attributes rather than a unique identity. They encapsulate validation logic and prevent primitive obsession.
+
+## What Are Value Objects?
+
+In Domain-Driven Design, a value object is defined by its attributes, not by an identity:
+
+- **No identity**: Two value objects with the same attributes are considered equal
+- **Immutable**: Once created, their state cannot change
+- **Self-validating**: Validation happens in the constructor, ensuring only valid objects exist
+- **Behavior-rich**: Contain domain logic related to the concept they represent
+
+<Info>
+Value objects solve **primitive obsession**—the anti-pattern of using primitive types (string, int, decimal) to represent domain concepts.
+</Info>
+
+## Why Use Value Objects?
+
+### Without Value Objects (Primitive Obsession)
+
+```csharp
+public class Booking
+{
+    public decimal PriceAmount { get; set; }
+    public string PriceCurrency { get; set; }
+    public string UserEmail { get; set; }
+    
+    // Validation scattered everywhere
+    // No compile-time safety
+    // Easy to mix up parameters
+}
+```
+
+Problems:
+- Email validation logic duplicated across the codebase
+- Can mix up currency codes
+- No type safety (can pass any string for email)
+- Business rules scattered everywhere
+
+### With Value Objects
+
+```csharp
+public class Booking
+{
+    public Money Price { get; set; }
+    public Email UserEmail { get; set; }
+    
+    // Validation centralized in value objects
+    // Type-safe
+    // Self-documenting
+}
+```
+
+Benefits:
+- **Type safety**: Can't pass Email where Money is expected
+- **Centralized validation**: Email validation in one place
+- **Self-documenting**: `Money` is clearer than `decimal`
+- **Business logic encapsulation**: Operations like currency conversion live in `Money`
+
+## Value Objects in Bookify
+
+### Money - Financial Values
+
+Represents monetary amounts with currency information:
+
+```csharp src/Bookify.Domain/Shared/Money.cs
+public record Money(decimal Amount, Currency Currency)
+{
+    public static Money operator +(Money first, Money second)
+    {
+        if (first.Currency != second.Currency)
+        {
+            throw new InvalidOperationException("Currencies have to be equal");
+        }
+
+        return new Money(first.Amount + second.Amount, first.Currency);
+    }
+
+    public static Money Zero() => new(0, Currency.None);
+
+    public static Money Zero(Currency currency) => new(0, currency);
+
+    public bool IsZero() => this == Zero(Currency);
+}
+```
+
+<Tip>
+The `Money` value object prevents currency mismatch errors at runtime and provides domain-specific operations like addition with currency validation.
+</Tip>
+
+**Used for:**
+- `Booking.PriceForPeriod`
+- `Booking.CleaningFee`
+- `Booking.AmenitiesUpCharge`
+- `Booking.TotalPrice`
+- `Apartment.Price`
+- `Apartment.CleaningFee`
+
+### DateRange - Periods
+
+Represents a period between two dates with validation:
+
+```csharp src/Bookify.Domain/Bookings/ValueObjects/DateRange.cs
+public record DateRange
+{
+    private DateRange() { }
+    
+    public DateOnly Start { get; init; }
+    public DateOnly End { get; init; }
+
+    public int LengthInDays => End.DayNumber - Start.DayNumber;
+
+    public static DateRange Create(DateOnly start, DateOnly end)
+    {
+        if (start > end)
+        {
+            throw new ApplicationException("End date precedes start date");
+        }
+
+        return new DateRange
+        {
+            Start = start,
+            End = end
+        };
+    }
+}
+```
+
+**Features:**
+- Factory method ensures valid date ranges
+- Computed property for duration
+- Encapsulates date range logic
+
+**Used for:**
+- `Booking.Duration`
+
+### Rating - Review Scores
+
+Represents a validated review rating using the Result pattern:
+
+```csharp src/Bookify.Domain/Reviews/ValueObjects/Rating.cs
+public sealed record Rating
+{
+    public static readonly Error Invalid = 
+        new("Rating.Invalid", "The rating is invalid");
+
+    private Rating(int value) => Value = value;
+
+    public int Value { get; init; }
+
+    public static Result<Rating> Create(int value)
+    {
+        if (value < 1 || value > 5)
+        {
+            return Result.Failure<Rating>(Invalid);
+        }
+
+        return new Rating(value);
+    }
+}
+```
+
+<Note>
+Rating uses a private constructor and factory method to ensure only valid ratings (1-5) can be created. It returns `Result<Rating>` for explicit error handling.
+</Note>
+
+**Used for:**
+- `Review.Rating`
+
+### Address - Location Information
+
+Represents a physical address:
+
+```csharp src/Bookify.Domain/Apartments/ValueObjects/Address.cs
+public record Address(
+    string Country,
+    string State,
+    string City,
+    string ZipCode,
+    string Street);
+```
+
+**Features:**
+- Immutable record
+- Structural equality (two addresses with same values are equal)
+- Groups related properties
+
+**Used for:**
+- `Apartment.Address`
+
+### Email - User Email Addresses
+
+```csharp src/Bookify.Domain/Users/ValueObjects/Email.cs
+public record Email(string Value);
+```
+
+**Used for:**
+- `User.Email`
+
+### FirstName and LastName - User Names
+
+```csharp src/Bookify.Domain/Users/ValueObjects/FirstName.cs
+public record FirstName(string Value);
+```
+
+```csharp src/Bookify.Domain/Users/ValueObjects/LastName.cs
+public record LastName(string Value);
+```
+
+**Used for:**
+- `User.FirstName`
+- `User.LastName`
+
+### Comment - Review Text
+
+```csharp src/Bookify.Domain/Reviews/ValueObjects/Comment.cs
+public sealed record Comment(string Value);
+```
+
+**Used for:**
+- `Review.Comment`
+
+## Implementing Value Objects
+
+### Using C# Records
+
+Bookify uses C# records for value objects because they provide:
+
+1. **Immutability by default**: Records encourage immutable design
+2. **Structural equality**: Automatic value-based equality
+3. **Concise syntax**: Less boilerplate code
+4. **Deconstruction**: Easy to extract values
+
+### Pattern 1: Simple Value Object
+
+For straightforward value objects without complex validation:
+
+```csharp
+public record Email(string Value);
+
+public record Address(
+    string Country,
+    string State,
+    string City,
+    string ZipCode,
+    string Street);
+```
+
+### Pattern 2: Factory Method with Validation
+
+For value objects requiring validation:
+
+```csharp
+public record DateRange
+{
+    private DateRange() { } // Private constructor prevents invalid creation
+    
+    public DateOnly Start { get; init; }
+    public DateOnly End { get; init; }
+
+    public static DateRange Create(DateOnly start, DateOnly end)
+    {
+        if (start > end)
+        {
+            throw new ApplicationException("End date precedes start date");
+        }
+
+        return new DateRange { Start = start, End = end };
+    }
+}
+```
+
+### Pattern 3: Factory Method with Result
+
+For functional error handling:
+
+```csharp
+public sealed record Rating
+{
+    public static readonly Error Invalid = 
+        new("Rating.Invalid", "The rating is invalid");
+
+    private Rating(int value) => Value = value;
+    
+    public int Value { get; init; }
+
+    public static Result<Rating> Create(int value)
+    {
+        if (value < 1 || value > 5)
+        {
+            return Result.Failure<Rating>(Invalid);
+        }
+
+        return new Rating(value);
+    }
+}
+```
+
+### Pattern 4: Rich Behavior
+
+Value objects can contain domain operations:
+
+```csharp
+public record Money(decimal Amount, Currency Currency)
+{
+    // Addition operator with currency validation
+    public static Money operator +(Money first, Money second)
+    {
+        if (first.Currency != second.Currency)
+        {
+            throw new InvalidOperationException("Currencies have to be equal");
+        }
+
+        return new Money(first.Amount + second.Amount, first.Currency);
+    }
+
+    // Domain-specific factory methods
+    public static Money Zero() => new(0, Currency.None);
+    public static Money Zero(Currency currency) => new(0, currency);
+
+    // Domain queries
+    public bool IsZero() => this == Zero(Currency);
+}
+```
+
+## Value Objects vs Entities
+
+| Aspect | Value Object | Entity |
+|--------|--------------|--------|
+| **Identity** | Defined by attributes | Has unique ID |
+| **Equality** | Structural (all properties match) | Identity-based (same ID) |
+| **Mutability** | Immutable | Mutable |
+| **Lifespan** | Created and discarded | Tracked throughout lifecycle |
+| **Examples** | Money, DateRange, Address | Booking, User, Apartment |
+
+<CodeGroup>
+```csharp Value Object Equality
+var money1 = new Money(100, Currency.Usd);
+var money2 = new Money(100, Currency.Usd);
+
+money1 == money2; // true - same values
+```
+
+```csharp Entity Equality
+var booking1 = new Booking { Id = Guid.NewGuid() };
+var booking2 = new Booking { Id = Guid.NewGuid() };
+
+booking1 == booking2; // false - different IDs
+```
+</CodeGroup>
+
+## When to Use Value Objects
+
+Use value objects when:
+
+<CardGroup cols={2}>
+  <Card title="No Identity Needed" icon="fingerprint">
+    The concept is defined by its attributes, not an ID. Example: Money, Address.
+  </Card>
+  
+  <Card title="Validation Required" icon="shield-check">
+    You need to enforce business rules. Example: Rating must be 1-5.
+  </Card>
+  
+  <Card title="Encapsulating Logic" icon="box">
+    Domain operations belong to the concept. Example: Money addition.
+  </Card>
+  
+  <Card title="Type Safety" icon="lock">
+    You want compile-time safety. Example: Can't mix Email with FirstName.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Make value objects immutable">
+    Use readonly properties or init-only setters:
+    
+    ```csharp
+    public record Money(decimal Amount, Currency Currency); // Immutable by default
+    
+    public record DateRange
+    {
+        public DateOnly Start { get; init; } // Can only set during initialization
+        public DateOnly End { get; init; }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Validate in constructor or factory">
+    Ensure invalid objects cannot be created:
+    
+    ```csharp
+    public static Result<Rating> Create(int value)
+    {
+        if (value < 1 || value > 5)
+        {
+            return Result.Failure<Rating>(Invalid);
+        }
+        return new Rating(value);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use private constructors">
+    Force creation through factory methods:
+    
+    ```csharp
+    private Rating(int value) => Value = value; // Can't call directly
+    
+    public static Result<Rating> Create(int value) { } // Must use factory
+    ```
+  </Accordion>
+
+  <Accordion title="Implement domain operations">
+    Put logic where it belongs:
+    
+    ```csharp
+    public static Money operator +(Money first, Money second)
+    {
+        if (first.Currency != second.Currency)
+            throw new InvalidOperationException("Currencies have to be equal");
+        
+        return new Money(first.Amount + second.Amount, first.Currency);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Replace primitive obsession">
+    Don't use strings/ints for domain concepts:
+    
+    ```csharp
+    // Bad
+    public void SendEmail(string email) { }
+    
+    // Good
+    public void SendEmail(Email email) { }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Persistence Considerations
+
+Value objects are typically stored as part of their owning entity:
+
+```csharp Entity Framework Configuration
+public class BookingConfiguration : IEntityTypeConfiguration<Booking>
+{
+    public void Configure(EntityTypeBuilder<Booking> builder)
+    {
+        // Money as owned entity
+        builder.OwnsOne(b => b.PriceForPeriod, priceBuilder =>
+        {
+            priceBuilder.Property(m => m.Amount).HasColumnName("PriceAmount");
+            priceBuilder.Property(m => m.Currency).HasColumnName("PriceCurrency");
+        });
+
+        // DateRange as owned entity
+        builder.OwnsOne(b => b.Duration, durationBuilder =>
+        {
+            durationBuilder.Property(d => d.Start).HasColumnName("DurationStart");
+            durationBuilder.Property(d => d.End).HasColumnName("DurationEnd");
+        });
+    }
+}
+```
+
+<Card title="Next Steps" icon="arrow-right" href="/concepts/aggregates">
+  Learn how aggregates establish consistency boundaries and enforce invariants
+</Card>
