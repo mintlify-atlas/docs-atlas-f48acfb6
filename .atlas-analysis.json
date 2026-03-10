@@ -1,0 +1,116 @@
+{
+  "projectType": "api-service",
+  "projectName": "Bookify",
+  "projectDescription": "A C# apartment booking management API built with Clean Architecture, CQRS, and Domain-Driven Design principles.",
+  "theme": "palm",
+  "primaryColor": "#512BD4",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/clean-architecture",
+              "architecture/cqrs-pattern",
+              "architecture/domain-driven-design",
+              "architecture/project-structure"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/result-pattern",
+              "concepts/domain-events",
+              "concepts/value-objects",
+              "concepts/aggregates"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/authentication",
+              "guides/caching",
+              "guides/database-setup",
+              "guides/health-checks",
+              "guides/docker-deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/authentication"
+            ]
+          },
+          {
+            "group": "Apartments",
+            "pages": [
+              "api-reference/apartments/search"
+            ]
+          },
+          {
+            "group": "Bookings",
+            "pages": [
+              "api-reference/bookings/get-booking",
+              "api-reference/bookings/reserve-booking"
+            ]
+          },
+          {
+            "group": "Users",
+            "pages": [
+              "api-reference/users/register",
+              "api-reference/users/login",
+              "api-reference/users/get-current-user"
+            ]
+          },
+          {
+            "group": "Reviews",
+            "pages": [
+              "api-reference/reviews/add-review"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Clean Architecture with distinct domain, application, and infrastructure layers",
+    "CQRS pattern using MediatR for command and query separation",
+    "Domain-Driven Design with aggregates, entities, and value objects",
+    "JWT authentication via Keycloak integration",
+    "Redis distributed caching for improved performance",
+    "PostgreSQL database with Entity Framework Core",
+    "Domain events for loose coupling between aggregates",
+    "Health checks for monitoring service dependencies",
+    "Validation using FluentValidation",
+    "Logging with Serilog and Seq integration"
+  ],
+  "publicApiSurface": [
+    "GET /api/apartments - Search available apartments",
+    "GET /api/bookings/{id} - Get booking details",
+    "POST /api/bookings - Reserve a new booking",
+    "POST /api/users/register - Register a new user",
+    "POST /api/users/login - Authenticate user",
+    "GET /api/users/me - Get current user information",
+    "POST /api/reviews - Add a review for completed booking",
+    "GET /health - Health check endpoint"
+  ]
+}
